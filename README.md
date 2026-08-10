@@ -1,21 +1,15 @@
-<p align="center">
-  <img src="docs/images/ucanaccess-csharp-logo-transparent.png" alt="UCanAccess-csharp" width="180" />
-</p>
+![UCanAccess-csharp logo](https://raw.githubusercontent.com/justybase/JustyBase.UCanAccessCs/master/docs/images/ucanaccess-csharp-logo-transparent.png)
 
-<h1 align="center">UCanAccess-csharp</h1>
+# UCanAccess-csharp
 
-<p align="center">
-  A pure .NET ADO.NET provider and file-format implementation for Microsoft Access
-  <code>.mdb</code> and <code>.accdb</code> databases.
-  <br />
-  No Microsoft Access. No ODBC. No ACE driver.
-</p>
+A pure .NET ADO.NET provider and file-format implementation for Microsoft Access
+`.mdb` and `.accdb` databases.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=flat" alt=".NET 10" />
-  <img src="https://img.shields.io/badge/license-Apache%202.0-4D6BFE?style=flat" alt="License: Apache 2.0" />
-  <img src="https://img.shields.io/badge/port%20of-Jackcess%20%2B%20UCanAccess-brightgreen?style=flat" alt="Port of Jackcess and UCanAccess" />
-</p>
+No Microsoft Access. No ODBC. No ACE driver.
+
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat)](https://dotnet.microsoft.com/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-4D6BFE?style=flat)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Port of Jackcess and UCanAccess](https://img.shields.io/badge/port%20of-Jackcess%20%2B%20UCanAccess-brightgreen?style=flat)](https://github.com/justybase/JustyBase.UCanAccessCs)
 
 ---
 
