@@ -11,7 +11,7 @@
          public surface incrementally. -->
     <NoWarn>$(NoWarn);1591;1573;0419</NoWarn>
     <Deterministic>true</Deterministic>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>UCanAccess-csharp contributors</Authors>
     <Company>JustyBase</Company>
     <RepositoryType>git</RepositoryType>
