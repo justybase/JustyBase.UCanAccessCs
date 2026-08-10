@@ -1,0 +1,471 @@
+[
+  {"sql": "SELECT * FROM t_master ORDER BY id", "resultSet": true, "columnCount": 6, "columns": ["id", "name", "cat", "active", "created", "budget"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "cat", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "active", "jdbcType": 16, "typeName": "BOOLEAN", "className": "java.lang.Boolean"}, {"name": "created", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}, {"name": "budget", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,"Alpha","A",true,{"dt": "2020-06-15T13:45:30.000"},{"dec": ["10000000", 4]}],
+    [2,"Beta","B",false,{"dt": "1899-12-30T00:00:00.000"},{"dec": ["-2507500", 4]}],
+    [3,"Gamma","A",true,{"dt": "2023-12-31T23:59:59.000"},{"dec": ["0", 4]}],
+    [4,"Delta","A",false,{"dt": "2000-01-01T12:00:00.000"},{"dec": ["123456789", 4]}],
+    [5,"Epsilon","B",true,{"dt": "1970-01-01T00:00:01.000"},{"dec": ["100", 4]}],
+    [6,null,null,false,null,null],
+    [7,"Alpha","C",true,{"dt": "2010-05-15T08:30:15.000"},{"dec": ["9999999900", 4]}]
+  ]},
+  {"sql": "SELECT * FROM t_detail ORDER BY id", "resultSet": true, "columnCount": 7, "columns": ["id", "master_id", "qty", "price", "dt", "note", "code"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "dt", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}, {"name": "note", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "code", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,1,2,{"dec": ["105000", 4]},{"dt": "2021-01-05T09:00:00.000"},"first item","a01"],
+    [2,1,3,{"dec": ["-52500", 4]},{"dt": "2021-02-10T10:30:00.000"},null,"a02"],
+    [3,1,0,{"dec": ["0", 4]},{"dt": "2021-03-15T11:45:30.000"},"zero qty","a03"],
+    [4,2,10,{"dec": ["999900", 4]},{"dt": "1899-12-30T00:00:00.000"},"old date","b01"],
+    [5,2,1,{"dec": ["10000000", 4]},{"dt": "2022-06-30T23:59:59.000"},"big price","b02"],
+    [6,3,5,{"dec": ["77500", 4]},{"dt": "2023-01-01T00:00:00.000"},"gamma detail","c01"],
+    [7,4,2,{"dec": ["10000", 4]},{"dt": "2020-06-15T13:45:30.000"},"delta detail","d01"],
+    [8,null,null,null,null,null,null],
+    [9,5,100,{"dec": ["100", 4]},{"dt": "2024-12-31T12:00:00.000"},"new year","e01"],
+    [10,1,4,{"dec": ["25000", 4]},{"dt": "2021-05-20T14:15:00.000"},"first item again","a04"],
+    [11,2,8,{"dec": ["-2500", 4]},{"dt": "2022-01-15T09:09:09.000"},"neg price","b03"],
+    [12,7,6,{"dec": ["12345600", 4]},{"dt": "2010-05-15T08:30:15.000"},"seven detail","g01"]
+  ]},
+  {"sql": "SELECT id, name, cat FROM t_master WHERE cat = 'A' ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "cat"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "cat", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"Alpha","A"],
+    [3,"Gamma","A"],
+    [4,"Delta","A"]
+  ]},
+  {"sql": "SELECT id, qty, price FROM t_detail WHERE qty > 2 ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "qty", "price"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [2,3,{"dec": ["-52500", 4]}],
+    [4,10,{"dec": ["999900", 4]}],
+    [6,5,{"dec": ["77500", 4]}],
+    [9,100,{"dec": ["100", 4]}],
+    [10,4,{"dec": ["25000", 4]}],
+    [11,8,{"dec": ["-2500", 4]}],
+    [12,6,{"dec": ["12345600", 4]}]
+  ]},
+  {"sql": "SELECT id, qty, price FROM t_detail WHERE qty BETWEEN 2 AND 10 ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "qty", "price"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,2,{"dec": ["105000", 4]}],
+    [2,3,{"dec": ["-52500", 4]}],
+    [4,10,{"dec": ["999900", 4]}],
+    [6,5,{"dec": ["77500", 4]}],
+    [7,2,{"dec": ["10000", 4]}],
+    [10,4,{"dec": ["25000", 4]}],
+    [11,8,{"dec": ["-2500", 4]}],
+    [12,6,{"dec": ["12345600", 4]}]
+  ]},
+  {"sql": "SELECT id, code FROM t_detail WHERE code IN ('a01', 'b02', 'zzz') ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "code"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "code", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"a01"],
+    [5,"b02"]
+  ]},
+  {"sql": "SELECT id, name FROM t_master WHERE name LIKE 'Al*' ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "name"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"Alpha"],
+    [7,"Alpha"]
+  ]},
+  {"sql": "SELECT id, note FROM t_detail WHERE IsNull(note) ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "note"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "note", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [2,null],
+    [8,null]
+  ]},
+  {"sql": "SELECT id, note FROM t_detail WHERE note IS NOT NULL ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "note"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "note", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"first item"],
+    [3,"zero qty"],
+    [4,"old date"],
+    [5,"big price"],
+    [6,"gamma detail"],
+    [7,"delta detail"],
+    [9,"new year"],
+    [10,"first item again"],
+    [11,"neg price"],
+    [12,"seven detail"]
+  ]},
+  {"sql": "SELECT DISTINCT master_id FROM t_detail ORDER BY master_id", "resultSet": true, "columnCount": 1, "columns": ["master_id"], "columnTypes": [{"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [null],
+    [1],
+    [2],
+    [3],
+    [4],
+    [5],
+    [7]
+  ]},
+  {"sql": "SELECT DISTINCTROW master_id FROM t_detail ORDER BY master_id", "resultSet": true, "columnCount": 1, "columns": ["master_id"], "columnTypes": [{"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [null],
+    [1],
+    [2],
+    [3],
+    [4],
+    [5],
+    [7]
+  ]},
+  {"sql": "SELECT TOP 5 id, qty FROM t_detail WHERE qty IS NOT NULL ORDER BY qty DESC, id", "resultSet": true, "columnCount": 2, "columns": ["id", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [9,100],
+    [4,10],
+    [11,8],
+    [12,6],
+    [6,5]
+  ]},
+  {"sql": "SELECT master_id, Count(*) AS cnt, Sum(qty) AS tot_qty, Avg(price) AS avg_price, Min(price) AS min_price, Max(price) AS max_price FROM t_detail GROUP BY master_id ORDER BY master_id", "resultSet": true, "columnCount": 6, "columns": ["master_id", "cnt", "tot_qty", "avg_price", "min_price", "max_price"], "columnTypes": [{"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "cnt", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}, {"name": "tot_qty", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}, {"name": "avg_price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "min_price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "max_price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [null,1,null,null,null,null],
+    [1,4,9,{"dec": ["19375", 4]},{"dec": ["-52500", 4]},{"dec": ["105000", 4]}],
+    [2,3,19,{"dec": ["3665800", 4]},{"dec": ["-2500", 4]},{"dec": ["10000000", 4]}],
+    [3,1,5,{"dec": ["77500", 4]},{"dec": ["77500", 4]},{"dec": ["77500", 4]}],
+    [4,1,2,{"dec": ["10000", 4]},{"dec": ["10000", 4]},{"dec": ["10000", 4]}],
+    [5,1,100,{"dec": ["100", 4]},{"dec": ["100", 4]},{"dec": ["100", 4]}],
+    [7,1,6,{"dec": ["12345600", 4]},{"dec": ["12345600", 4]},{"dec": ["12345600", 4]}]
+  ]},
+  {"sql": "SELECT master_id, Count(*) AS cnt FROM t_detail GROUP BY master_id HAVING Count(*) > 1 ORDER BY master_id", "resultSet": true, "columnCount": 2, "columns": ["master_id", "cnt"], "columnTypes": [{"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "cnt", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [1,4],
+    [2,3]
+  ]},
+  {"sql": "SELECT m.id, m.name, d.id AS did, d.qty FROM t_master m INNER JOIN t_detail d ON m.id = d.master_id ORDER BY d.id", "resultSet": true, "columnCount": 4, "columns": ["id", "name", "did", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "did", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,"Alpha",1,2],
+    [1,"Alpha",2,3],
+    [1,"Alpha",3,0],
+    [2,"Beta",4,10],
+    [2,"Beta",5,1],
+    [3,"Gamma",6,5],
+    [4,"Delta",7,2],
+    [5,"Epsilon",9,100],
+    [1,"Alpha",10,4],
+    [2,"Beta",11,8],
+    [7,"Alpha",12,6]
+  ]},
+  {"sql": "SELECT m.id, m.name, d.qty FROM t_master m LEFT JOIN t_detail d ON m.id = d.master_id ORDER BY m.id, d.id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,"Alpha",2],
+    [1,"Alpha",3],
+    [1,"Alpha",0],
+    [1,"Alpha",4],
+    [2,"Beta",10],
+    [2,"Beta",1],
+    [2,"Beta",8],
+    [3,"Gamma",5],
+    [4,"Delta",2],
+    [5,"Epsilon",100],
+    [6,null,null],
+    [7,"Alpha",6]
+  ]},
+  {"sql": "SELECT m.id, m.name, d.qty FROM t_master m RIGHT JOIN t_detail d ON m.id = d.master_id ORDER BY d.id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,"Alpha",2],
+    [1,"Alpha",3],
+    [1,"Alpha",0],
+    [2,"Beta",10],
+    [2,"Beta",1],
+    [3,"Gamma",5],
+    [4,"Delta",2],
+    [null,null,null],
+    [5,"Epsilon",100],
+    [1,"Alpha",4],
+    [2,"Beta",8],
+    [7,"Alpha",6]
+  ]},
+  {"sql": "SELECT m.id, m.name FROM t_master m WHERE EXISTS (SELECT 1 FROM t_detail d WHERE d.master_id = m.id AND d.qty > 50) ORDER BY m.id", "resultSet": true, "columnCount": 2, "columns": ["id", "name"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [5,"Epsilon"]
+  ]},
+  {"sql": "SELECT id, qty FROM t_detail WHERE master_id IN (SELECT id FROM t_master WHERE active = true) ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,2],
+    [2,3],
+    [3,0],
+    [6,5],
+    [9,100],
+    [10,4],
+    [12,6]
+  ]},
+  {"sql": "SELECT m.id, m.name, d.qty FROM t_master m, t_detail d WHERE m.id = d.master_id ORDER BY d.id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,"Alpha",2],
+    [1,"Alpha",3],
+    [1,"Alpha",0],
+    [2,"Beta",10],
+    [2,"Beta",1],
+    [3,"Gamma",5],
+    [4,"Delta",2],
+    [5,"Epsilon",100],
+    [1,"Alpha",4],
+    [2,"Beta",8],
+    [7,"Alpha",6]
+  ]},
+  {"sql": "SELECT m.id, (SELECT Count(*) FROM t_detail d WHERE d.master_id = m.id) AS n FROM t_master m ORDER BY m.id", "resultSet": true, "columnCount": 2, "columns": ["id", "N"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "N", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [1,4],
+    [2,3],
+    [3,1],
+    [4,1],
+    [5,1],
+    [6,0],
+    [7,1]
+  ]},
+  {"sql": "SELECT cat, Count(*) AS cnt FROM t_master GROUP BY cat ORDER BY cat", "resultSet": true, "columnCount": 2, "columns": ["cat", "cnt"], "columnTypes": [{"name": "cat", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "cnt", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [null,1],
+    ["A",3],
+    ["B",2],
+    ["C",1]
+  ]},
+  {"sql": "SELECT id, UCase(name), LCase(name), Len(name), Left(name, 3), Right(name, 4), Mid(name, 2, 3) FROM t_master WHERE id = 1", "resultSet": true, "columnCount": 7, "columns": ["id", "C2", "C3", "C4", "C5", "C6", "C7"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C2", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C3", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C4", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C5", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C6", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C7", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"ALPHA","alpha",5,"Alp","lpha","lph"]
+  ]},
+  {"sql": "SELECT id, InStr(name, 'ph') AS ipos, Replace(name, 'A', 'X') AS rep, Trim(name) AS tr FROM t_master WHERE id = 1", "resultSet": true, "columnCount": 4, "columns": ["id", "ipos", "rep", "tr"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "ipos", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "rep", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "tr", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,3,"Xlpha","Alpha"]
+  ]},
+  {"sql": "SELECT id, Abs(qty) AS a, Sgn(qty) AS s, Int(qty) AS i, Fix(qty) AS f FROM t_detail WHERE id = 4", "resultSet": true, "columnCount": 5, "columns": ["id", "a", "s", "i", "f"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "a", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "s", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "i", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "f", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [4,10,1,10,{"d": "0x4024000000000000"}]
+  ]},
+  {"sql": "SELECT id, Format(dt, 'yyyy-mm-dd') AS fmt, Year(dt), Month(dt), Day(dt), DatePart('yyyy', dt) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 6, "columns": ["id", "fmt", "C3", "C4", "C5", "C6"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "fmt", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C3", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C4", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C5", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C6", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [1,"2021-01-05",2021,1,5,2021]
+  ]},
+  {"sql": "SELECT id, DateAdd('d', 5, dt) AS plus5, DateDiff('d', dt, #1/1/2022#) AS diff_days FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 3, "columns": ["id", "plus5", "diff_days"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "plus5", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}, {"name": "diff_days", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [1,{"dt": "2021-01-10T09:00:00.000"},361]
+  ]},
+  {"sql": "SELECT id, CStr(id) AS sid FROM t_master ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "sid"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "sid", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"1"],
+    [2,"2"],
+    [3,"3"],
+    [4,"4"],
+    [5,"5"],
+    [6,"6"],
+    [7,"7"]
+  ]},
+  {"sql": "SELECT id, name & '!' AS ex FROM t_master WHERE id = 1", "resultSet": true, "columnCount": 2, "columns": ["id", "ex"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "ex", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"Alpha!"]
+  ]},
+  {"sql": "SELECT id, qty, price FROM t_detail WHERE qty > 0 AND (price < 0 OR price > 100) ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "qty", "price"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [2,3,{"dec": ["-52500", 4]}],
+    [5,1,{"dec": ["10000000", 4]}],
+    [11,8,{"dec": ["-2500", 4]}],
+    [12,6,{"dec": ["12345600", 4]}]
+  ]},
+  {"sql": "SELECT m.id, m.name, Count(d.id) AS n FROM t_master m LEFT JOIN t_detail d ON m.id = d.master_id GROUP BY m.id, m.name ORDER BY m.id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "n"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "n", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [1,"Alpha",4],
+    [2,"Beta",3],
+    [3,"Gamma",1],
+    [4,"Delta",1],
+    [5,"Epsilon",1],
+    [6,null,0],
+    [7,"Alpha",1]
+  ]},
+  {"sql": "SELECT id FROM t_master WHERE cat = 'A' UNION SELECT id FROM t_master WHERE cat = 'B' ORDER BY id", "resultSet": true, "columnCount": 1, "columns": ["id"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [1],
+    [2],
+    [3],
+    [4],
+    [5]
+  ]},
+  {"sql": "SELECT IIf(qty > 0, 'pos', IIf(qty < 0, 'neg', 'zero')) AS sign_of FROM t_detail WHERE id <= 5 ORDER BY id", "resultSet": true, "columnCount": 1, "columns": ["sign_of"], "columnTypes": [{"name": "sign_of", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["pos"],
+    ["pos"],
+    ["zero"],
+    ["pos"],
+    ["pos"]
+  ]},
+  {"sql": "SELECT Switch(qty > 0, 'pos', qty < 0, 'neg', true, 'zero') AS sgn_of FROM t_detail WHERE id <= 5 ORDER BY id", "resultSet": true, "columnCount": 1, "columns": ["sgn_of"], "columnTypes": [{"name": "sgn_of", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["pos"],
+    ["pos"],
+    ["zero"],
+    ["pos"],
+    ["pos"]
+  ]},
+  {"sql": "SELECT Count(*) AS total, Sum(price) AS total_price FROM t_detail WHERE master_id = 1", "resultSet": true, "columnCount": 2, "columns": ["total", "total_price"], "columnTypes": [{"name": "total", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}, {"name": "total_price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [4,{"dec": ["77500", 4]}]
+  ]},
+  {"sql": "SELECT id, price FROM t_detail WHERE price = 10.50 ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "price"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "price", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,{"dec": ["105000", 4]}]
+  ]},
+  {"sql": "SELECT code, Count(DISTINCT master_id) AS n FROM t_detail GROUP BY code ORDER BY code", "resultSet": true, "columnCount": 2, "columns": ["code", "n"], "columnTypes": [{"name": "code", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "n", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [null,0],
+    ["a01",1],
+    ["a02",1],
+    ["a03",1],
+    ["a04",1],
+    ["b01",1],
+    ["b02",1],
+    ["b03",1],
+    ["c01",1],
+    ["d01",1],
+    ["e01",1],
+    ["g01",1]
+  ]},
+  {"sql": "SELECT id, active FROM t_master WHERE active = true ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "active"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "active", "jdbcType": 16, "typeName": "BOOLEAN", "className": "java.lang.Boolean"}], "rows": [
+    [1,true],
+    [3,true],
+    [5,true],
+    [7,true]
+  ]},
+  {"sql": "SELECT id, created FROM t_master WHERE created < #1/1/2021# ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "created"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "created", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}], "rows": [
+    [1,{"dt": "2020-06-15T13:45:30.000"}],
+    [2,{"dt": "1899-12-30T00:00:00.000"}],
+    [4,{"dt": "2000-01-01T12:00:00.000"}],
+    [5,{"dt": "1970-01-01T00:00:01.000"}],
+    [7,{"dt": "2010-05-15T08:30:15.000"}]
+  ]},
+  {"sql": "SELECT id, budget FROM t_master WHERE budget > 0 ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "budget"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "budget", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,{"dec": ["10000000", 4]}],
+    [4,{"dec": ["123456789", 4]}],
+    [5,{"dec": ["100", 4]}],
+    [7,{"dec": ["9999999900", 4]}]
+  ]},
+  {"sql": "SELECT m.id, m.budget FROM t_master m WHERE m.budget = 1000.00 ORDER BY m.id", "resultSet": true, "columnCount": 2, "columns": ["id", "budget"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "budget", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,{"dec": ["10000000", 4]}]
+  ]},
+  {"sql": "SELECT Atn(1) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [{"d": "0x3fe921fb54442d18"}]
+  ]},
+  {"sql": "SELECT Round(2.5, 0) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [{"d": "0x4008000000000000"}]
+  ]},
+  {"sql": "SELECT Round(-2.5, 0) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [{"d": "0xc000000000000000"}]
+  ]},
+  {"sql": "SELECT Round(1.005, 2) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [{"d": "0x3ff0000000000000"}]
+  ]},
+  {"sql": "SELECT Partition(100, 0, 500, 100) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["100:199"]
+  ]},
+  {"sql": "SELECT DCount('*', 't_detail') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [12]
+  ]},
+  {"sql": "SELECT DCount('qty', 't_detail', 'master_id = 1') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [4]
+  ]},
+  {"sql": "SELECT DSum('qty', 't_detail', 'master_id = 1') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [9]
+  ]},
+  {"sql": "SELECT DLookup('name', 't_master', 'id = 3') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["Gamma"]
+  ]},
+  {"sql": "SELECT DMax('qty', 't_detail', 'master_id = 2') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [10]
+  ]},
+  {"sql": "SELECT DMin('price', 't_detail', 'master_id = 2') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [{"dec": ["-2500", 4]}]
+  ]},
+  {"sql": "SELECT DAvg('price', 't_detail', 'master_id = 1') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [{"dec": ["19375", 4]}]
+  ]},
+  {"sql": "SELECT DFirst('code', 't_detail', 'master_id = 1') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["a01"]
+  ]},
+  {"sql": "SELECT DLast('code', 't_detail', 'master_id = 1') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["a04"]
+  ]},
+  {"sql": "SELECT DMax('dt', 't_detail') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}], "rows": [
+    [{"dt": "2024-12-31T12:00:00.000"}]
+  ]},
+  {"sql": "SELECT Str(5) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [" 5"]
+  ]},
+  {"sql": "SELECT Str(-5) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["-5"]
+  ]},
+  {"sql": "SELECT Str(1234.5678) FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [" 1234.5678"]
+  ]},
+  {"sql": "SELECT id & '-' & price FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1-10.5000"]
+  ]},
+  {"sql": "SELECT name & '-' & budget FROM t_master WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["Alpha-1000.0000"]
+  ]},
+  {"sql": "SELECT master_id, Avg(qty) AS avg_qty FROM t_detail GROUP BY master_id ORDER BY master_id", "resultSet": true, "columnCount": 2, "columns": ["master_id", "avg_qty"], "columnTypes": [{"name": "master_id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "avg_qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [null,null],
+    [1,2],
+    [2,6],
+    [3,5],
+    [4,2],
+    [5,100],
+    [7,6]
+  ]},
+  {"sql": "SELECT id, qty FROM t_detail ORDER BY qty DESC, id", "resultSet": true, "columnCount": 2, "columns": ["id", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [8,null],
+    [9,100],
+    [4,10],
+    [11,8],
+    [12,6],
+    [6,5],
+    [10,4],
+    [2,3],
+    [1,2],
+    [7,2],
+    [5,1],
+    [3,0]
+  ]},
+  {"sql": "WITH big AS (SELECT * FROM t_detail WHERE qty > 5) SELECT count(*) AS n FROM big", "resultSet": true, "columnCount": 1, "columns": ["N"], "columnTypes": [{"name": "N", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [4]
+  ]},
+  {"sql": "SELECT m.id, m.name, d.qty FROM t_master m FULL OUTER JOIN t_detail d ON m.id = d.master_id ORDER BY m.id, d.id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "qty"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [null,null,null],
+    [1,"Alpha",2],
+    [1,"Alpha",3],
+    [1,"Alpha",0],
+    [1,"Alpha",4],
+    [2,"Beta",10],
+    [2,"Beta",1],
+    [2,"Beta",8],
+    [3,"Gamma",5],
+    [4,"Delta",2],
+    [5,"Epsilon",100],
+    [6,null,null],
+    [7,"Alpha",6]
+  ]},
+  {"sql": "SELECT sub.id, sub.qty FROM (SELECT id, qty FROM t_detail WHERE qty IS NOT NULL) sub ORDER BY sub.id", "resultSet": true, "columnCount": 2, "columns": ["ID", "qty"], "columnTypes": [{"name": "ID", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "qty", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}], "rows": [
+    [1,2],
+    [2,3],
+    [3,0],
+    [4,10],
+    [5,1],
+    [6,5],
+    [7,2],
+    [9,100],
+    [10,4],
+    [11,8],
+    [12,6]
+  ]},
+  {"sql": "SELECT Format(dt, 'mmmm dd, yyyy') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["January 05, 2021"]
+  ]},
+  {"sql": "SELECT Format(dt, 'mmm yyyy') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["Jan 2021"]
+  ]},
+  {"sql": "SELECT Format(dt, 'ddd') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["005"]
+  ]},
+  {"sql": "SELECT Format(dt, 'dddd') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["Tuesday"]
+  ]},
+  {"sql": "SELECT Format(dt, 'hh:mm:ss') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["09:01:00"]
+  ]},
+  {"sql": "SELECT Format(1234.5, '#,##0.00') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1,234.50"]
+  ]},
+  {"sql": "SELECT Format(1234.5, '0.00') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1234.50"]
+  ]},
+  {"sql": "SELECT Format(0.5, '0%') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["50%"]
+  ]},
+  {"sql": "SELECT Format(1234.5, '$#,##0.00') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["$1,234.50"]
+  ]},
+  {"sql": "SELECT Format(1234.5, 'general number') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1234.5"]
+  ]},
+  {"sql": "SELECT Format(1234.5, 'fixed') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1234.50"]
+  ]},
+  {"sql": "SELECT Format(1234.5, 'standard') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1,234.5"]
+  ]},
+  {"sql": "SELECT Format(1234.5, 'currency') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["$1,234.50"]
+  ]},
+  {"sql": "SELECT Format(0.5, 'percent') FROM t_detail WHERE id = 1", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["50.00%"]
+  ]},
+  {"sql": "SELECT count(*) FROM t_master WHERE name = 'alpha'", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [2]
+  ]},
+  {"sql": "SELECT count(*) FROM t_master WHERE name > 'ALPHA'", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [4]
+  ]},
+  {"sql": "SELECT id, code FROM t_detail WHERE code = 'A01' ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "code"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "code", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"a01"]
+  ]},
+  {"sql": "SELECT id, note FROM t_detail WHERE note = 'FIRST ITEM' ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "note"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "note", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"first item"]
+  ]},
+  {"sql": "SELECT id FROM t_master WHERE name BETWEEN 'ALPHA' AND 'DELTA' ORDER BY id", "resultSet": true, "columnCount": 1, "columns": ["id"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [1],
+    [2],
+    [4],
+    [7]
+  ]}
+]

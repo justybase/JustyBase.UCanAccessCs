@@ -1,0 +1,45 @@
+{
+  "file": "accdb2016.accdb",
+  "tables": [
+    {
+      "name": "t_data",
+      "structure": {"rowCount": 4, "columnCount": 6, "indexCount": 0},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "name", "type": "TEXT", "length": 60, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "val", "type": "DOUBLE", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "m", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "dt", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "active", "type": "BOOLEAN", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1,"Alpha",{"d": "0x3ff8000000000000"},{"dec": ["105000", 4]},{"dt": "2020-06-15T13:45:30"},true],
+        [2,"Beta",{"d": "0xc002000000000000"},{"dec": ["-100", 4]},{"dt": "1899-12-30T00:00"},false],
+        [3,"Gamma",{"d": "0x4059000000000000"},{"dec": ["9999900", 4]},{"dt": "2023-12-31T23:59:59"},true],
+        [4,null,null,null,null,false]
+      ]
+    },
+    {
+      "name": "t_grp",
+      "structure": {"rowCount": 5, "columnCount": 3, "indexCount": 0},
+      "columns": [
+        {"name": "gid", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "grp", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "val", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1,"A",10],
+        [2,"A",20],
+        [3,"B",5],
+        [4,"B",15],
+        [5,"C",100]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

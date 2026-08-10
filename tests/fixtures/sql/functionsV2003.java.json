@@ -1,0 +1,32 @@
+[
+  {"sql": "SELECT * FROM t_funcs", "resultSet": true, "columnCount": 4, "columns": ["id", "descr", "num", "date0"], "columnTypes": [{"name": "id", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "descr", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "num", "jdbcType": 2, "typeName": "NUMERIC", "className": "java.math.BigDecimal"}, {"name": "date0", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}], "rows": [
+    [1234,"Show must go off",{"dec": ["-1110554", 3]},{"dt": "2003-11-22T22:42:58.000"}]
+  ]},
+  {"sql": "SELECT id, num FROM t_funcs WHERE num < 0", "resultSet": true, "columnCount": 2, "columns": ["id", "num"], "columnTypes": [{"name": "id", "jdbcType": 5, "typeName": "SMALLINT", "className": "java.lang.Integer"}, {"name": "num", "jdbcType": 2, "typeName": "NUMERIC", "className": "java.math.BigDecimal"}], "rows": [
+    [1234,{"dec": ["-1110554", 3]}]
+  ]},
+  {"sql": "SELECT num * 2, num + 0.5 FROM t_funcs", "resultSet": true, "columnCount": 2, "columns": ["C1", "C2"], "columnTypes": [{"name": "C1", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "C2", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [{"dec": ["-2221108", 3]},{"dec": ["-1110054", 3]}]
+  ]},
+  {"sql": "SELECT IIf(num < 0, 'neg', 'pos') FROM t_funcs", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["neg"]
+  ]},
+  {"sql": "SELECT Len(descr) FROM t_funcs", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [16]
+  ]},
+  {"sql": "SELECT Format(date0, 'yyyy'), Month(date0), Day(date0) FROM t_funcs", "resultSet": true, "columnCount": 3, "columns": ["C1", "C2", "C3"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C2", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C3", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    ["2003",11,22]
+  ]},
+  {"sql": "SELECT DateAdd('d', 5, date0) FROM t_funcs", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}], "rows": [
+    [{"dt": "2003-11-27T22:42:58.000"}]
+  ]},
+  {"sql": "SELECT DateDiff('d', date0, #1/1/2004#) FROM t_funcs", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [39]
+  ]},
+  {"sql": "SELECT UCase(descr), Left(descr, 5) FROM t_funcs", "resultSet": true, "columnCount": 2, "columns": ["C1", "C2"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C2", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["SHOW MUST GO OFF","Show "]
+  ]},
+  {"sql": "SELECT CStr(id) FROM t_funcs", "resultSet": true, "columnCount": 1, "columns": ["C1"], "columnTypes": [{"name": "C1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["1,234"]
+  ]}
+]

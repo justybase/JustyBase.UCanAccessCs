@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UCanAccess.Console/UCanAccess.Console.csproj" />
+    <Project Path="src/UCanAccess.File/UCanAccess.File.csproj" />
+    <Project Path="src/UCanAccess/UCanAccess.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj" />
+    <Project Path="tests/UCanAccess.Tests/UCanAccess.Tests.csproj" />
+  </Folder>
+</Solution>

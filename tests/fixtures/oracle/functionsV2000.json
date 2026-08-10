@@ -1,0 +1,22 @@
+{
+  "file": "functionsV2000.mdb",
+  "tables": [
+    {
+      "name": "t_funcs",
+      "structure": {"rowCount": 1, "columnCount": 4, "indexCount": 0},
+      "columns": [
+        {"name": "id", "type": "INT", "length": 2, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "descr", "type": "MEMO", "length": 0, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "num", "type": "NUMERIC", "length": 17, "autoNumber": false, "calculated": false, "precision": 12, "scale": 3, "required": false},
+        {"name": "date0", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1234,"Show must go off",{"dec": ["-1110554", 3]},{"dt": "2003-11-22T22:42:58"}]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

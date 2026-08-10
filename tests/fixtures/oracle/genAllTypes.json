@@ -1,0 +1,36 @@
+{
+  "file": "genAllTypes.mdb",
+  "tables": [
+    {
+      "name": "t_alltypes",
+      "structure": {"rowCount": 6, "columnCount": 13, "indexCount": 0},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "name", "type": "TEXT", "length": 50, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "memo", "type": "MEMO", "length": 0, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "i", "type": "INT", "length": 2, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "l", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "d", "type": "DOUBLE", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "f", "type": "FLOAT", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "m", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "num", "type": "NUMERIC", "length": 17, "autoNumber": false, "calculated": false, "precision": 10, "scale": 2, "required": false},
+        {"name": "dt", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "b", "type": "BOOLEAN", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "guid", "type": "GUID", "length": 16, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "bin", "type": "OLE", "length": 0, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1,"Alpha","some memo text",1,100,{"d": "0x400921fb54442d11"},{"f": "0x3fc00000"},{"dec": ["123456789", 4]},{"dec": ["123456", 2]},{"dt": "2020-06-15T13:45:30"},true,"{12345678-1234-5678-9ABC-DEF012345678}",{"b64": "AQIDBAU="}],
+        [2,"Beta",null,-2,-200,{"d": "0xbf50624dd2f1a9fc"},{"f": "0xc0200000"},{"dec": ["-100", 4]},{"dec": ["-2", 2]},{"dt": "1899-12-30T00:00"},false,"{87654321-4321-8765-4321-123456789ABC}",{"b64": ""}],
+        [3,"Gamma","unicode: éüł中文",32767,2147483647,{"d": "0x54b249ad2594c37d"},{"f": "0x7f7fc99e"},{"dec": ["99999999999900", 4]},{"dec": ["9999999999", 2]},{"dt": "2023-12-31T23:59:59"},true,"{00000000-0000-0000-0000-000000000001}",{"b64": "/wB/"}],
+        [4,"Delta","trailing spaces   ",0,0,{"d": "0x0"},{"f": "0x0"},{"dec": ["0", 4]},{"dec": ["0", 2]},{"dt": "2000-01-01T12:00"},false,"{11111111-2222-3333-4444-555555555555}",null],
+        [5,"Epsilon","tab\there\nnewline",5,5,{"d": "0x4016000000000000"},{"f": "0x40b00000"},{"dec": ["100", 4]},{"dec": ["2", 2]},{"dt": "1970-01-01T00:00:01"},true,"{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",{"b64": "Kg=="}],
+        [6,null,null,null,null,null,null,null,null,null,false,null,null]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

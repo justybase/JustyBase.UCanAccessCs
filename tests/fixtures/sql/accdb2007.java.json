@@ -1,0 +1,44 @@
+[
+  {"sql": "SELECT * FROM t_data ORDER BY id", "resultSet": true, "columnCount": 6, "columns": ["id", "name", "val", "m", "dt", "active"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "val", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}, {"name": "m", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "dt", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}, {"name": "active", "jdbcType": 16, "typeName": "BOOLEAN", "className": "java.lang.Boolean"}], "rows": [
+    [1,"Alpha",{"d": "0x3ff8000000000000"},{"dec": ["105000", 4]},{"dt": "2020-06-15T13:45:30.000"},true],
+    [2,"Beta",{"d": "0xc002000000000000"},{"dec": ["-100", 4]},{"dt": "1899-12-30T00:00:00.000"},false],
+    [3,"Gamma",{"d": "0x4059000000000000"},{"dec": ["9999900", 4]},{"dt": "2023-12-31T23:59:59.000"},true],
+    [4,null,null,null,null,false]
+  ]},
+  {"sql": "SELECT id, name, val FROM t_data WHERE active = true ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "name", "val"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "val", "jdbcType": 8, "typeName": "DOUBLE", "className": "java.lang.Double"}], "rows": [
+    [1,"Alpha",{"d": "0x3ff8000000000000"}],
+    [3,"Gamma",{"d": "0x4059000000000000"}]
+  ]},
+  {"sql": "SELECT grp, Count(*) AS n, Sum(val) AS tot FROM t_grp GROUP BY grp ORDER BY grp", "resultSet": true, "columnCount": 3, "columns": ["grp", "n", "tot"], "columnTypes": [{"name": "grp", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "n", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}, {"name": "tot", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    ["A",2,30],
+    ["B",2,20],
+    ["C",1,100]
+  ]},
+  {"sql": "SELECT name FROM t_data WHERE name LIKE 'A*' ORDER BY id", "resultSet": true, "columnCount": 1, "columns": ["name"], "columnTypes": [{"name": "name", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["Alpha"]
+  ]},
+  {"sql": "SELECT IIf(val > 10, 'big', 'small') AS sz FROM t_grp ORDER BY gid", "resultSet": true, "columnCount": 1, "columns": ["sz"], "columnTypes": [{"name": "sz", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["small"],
+    ["big"],
+    ["small"],
+    ["big"],
+    ["big"]
+  ]},
+  {"sql": "SELECT Count(DISTINCT grp) AS g FROM t_grp", "resultSet": true, "columnCount": 1, "columns": ["g"], "columnTypes": [{"name": "g", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [3]
+  ]},
+  {"sql": "SELECT id, UCase(name) AS up, Len(name) AS l FROM t_data WHERE id <= 2 ORDER BY id", "resultSet": true, "columnCount": 3, "columns": ["id", "up", "l"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "up", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "l", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}], "rows": [
+    [1,"ALPHA",5],
+    [2,"BETA",4]
+  ]},
+  {"sql": "SELECT Sum(val) AS total FROM t_grp", "resultSet": true, "columnCount": 1, "columns": ["total"], "columnTypes": [{"name": "total", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [150]
+  ]},
+  {"sql": "SELECT id, m FROM t_data WHERE m > 0 ORDER BY id", "resultSet": true, "columnCount": 2, "columns": ["id", "m"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "m", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [1,{"dec": ["105000", 4]}],
+    [3,{"dec": ["9999900", 4]}]
+  ]},
+  {"sql": "SELECT id, Format(dt, 'yyyy-mm-dd') AS fmt FROM t_data WHERE id = 1", "resultSet": true, "columnCount": 2, "columns": ["id", "fmt"], "columnTypes": [{"name": "id", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "fmt", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    [1,"2020-06-15"]
+  ]}
+]

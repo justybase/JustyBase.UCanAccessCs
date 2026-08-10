@@ -1,0 +1,16 @@
+{
+  "file": "genLinkee.mdb",
+  "tables": [
+    {
+      "name": "t_linkee",
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0},
+        {"name": "name", "type": "TEXT", "length": 50, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0}
+      ],
+      "rows": [
+        [1,"linkee one"],
+        [2,"linkee two"]
+      ]
+    }
+  ]
+}

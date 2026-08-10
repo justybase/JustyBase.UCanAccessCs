@@ -1,0 +1,46 @@
+[
+  {"sql": "SELECT * FROM t_pivot", "resultSet": true, "columnCount": 3, "columns": ["c_cod", "c_val", "c_dt"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "c_val", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "c_dt", "jdbcType": 93, "typeName": "TIMESTAMP", "className": "java.sql.Timestamp"}], "rows": [
+    ["paperino",{"dec": ["44440000", 4]},{"dt": "2013-05-30T13:18:14.000"}],
+    ["piero",{"dec": ["330000", 4]},{"dt": "2013-01-30T13:18:14.000"}],
+    ["pippo",{"dec": ["1220000", 4]},{"dt": "2013-05-30T13:18:14.000"}],
+    ["pluto",{"dec": ["4430000", 4]},{"dt": "2013-01-30T13:18:14.000"}]
+  ]},
+  {"sql": "SELECT c_cod, c_val FROM t_pivot WHERE c_val > 100", "resultSet": true, "columnCount": 2, "columns": ["c_cod", "c_val"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "c_val", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    ["paperino",{"dec": ["44440000", 4]}],
+    ["pippo",{"dec": ["1220000", 4]}],
+    ["pluto",{"dec": ["4430000", 4]}]
+  ]},
+  {"sql": "SELECT c_cod FROM t_pivot ORDER BY c_val DESC", "resultSet": true, "columnCount": 1, "columns": ["c_cod"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["paperino"],
+    ["pluto"],
+    ["pippo"],
+    ["piero"]
+  ]},
+  {"sql": "SELECT c_cod FROM t_pivot WHERE c_cod LIKE 'p*'", "resultSet": true, "columnCount": 1, "columns": ["c_cod"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["paperino"],
+    ["piero"],
+    ["pippo"],
+    ["pluto"]
+  ]},
+  {"sql": "SELECT c_cod, IIf(c_val > 100, 'big', 'small') FROM t_pivot", "resultSet": true, "columnCount": 2, "columns": ["c_cod", "C2"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}, {"name": "C2", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["paperino","big"],
+    ["piero","small"],
+    ["pippo","big"],
+    ["pluto","big"]
+  ]},
+  {"sql": "SELECT Count(*), Sum(c_val), Max(c_val), Min(c_val) FROM t_pivot", "resultSet": true, "columnCount": 4, "columns": ["C1", "C2", "C3", "C4"], "columnTypes": [{"name": "C1", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}, {"name": "C2", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "C3", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}, {"name": "C4", "jdbcType": 3, "typeName": "DECIMAL", "className": "java.math.BigDecimal"}], "rows": [
+    [4,{"dec": ["50420000", 4]},{"dec": ["44440000", 4]},{"dec": ["330000", 4]}]
+  ]},
+  {"sql": "SELECT c_cod FROM t_pivot WHERE c_dt = #5/30/2013 1:18:14 PM#", "resultSet": true, "columnCount": 1, "columns": ["c_cod"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["paperino"],
+    ["pippo"]
+  ]},
+  {"sql": "SELECT Month(c_dt), Year(c_dt), Count(*) FROM t_pivot GROUP BY Month(c_dt), Year(c_dt) ORDER BY Month(c_dt)", "resultSet": true, "columnCount": 3, "columns": ["C1", "C2", "C3"], "columnTypes": [{"name": "C1", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C2", "jdbcType": 4, "typeName": "INTEGER", "className": "java.lang.Integer"}, {"name": "C3", "jdbcType": -5, "typeName": "BIGINT", "className": "java.lang.Long"}], "rows": [
+    [1,2013,2],
+    [5,2013,2]
+  ]},
+  {"sql": "SELECT TOP 2 c_cod FROM t_pivot ORDER BY c_cod", "resultSet": true, "columnCount": 1, "columns": ["c_cod"], "columnTypes": [{"name": "c_cod", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["paperino"],
+    ["piero"]
+  ]}
+]

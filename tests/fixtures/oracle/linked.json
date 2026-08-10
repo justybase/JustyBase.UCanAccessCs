@@ -1,0 +1,9 @@
+{
+  "file": "linked.mdb",
+  "tables": [
+    {"name": "Table1", "error": "java.io.FileNotFoundException: given file does not exist: C:\\db\\linkee1.mdb"},
+    {"name": "table2", "error": "java.io.FileNotFoundException: given file does not exist: C:\\db\\linkee2.mdb"}
+  ],
+  "relationships": [
+  ]
+}

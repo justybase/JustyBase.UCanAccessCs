@@ -1,0 +1,11 @@
+[
+  {"sql": "SELECT * FROM [q_like2]", "resultSet": true, "columnCount": 1, "columns": ["CAMPO2"], "columnTypes": [{"name": "CAMPO2", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["dd1"]
+  ]},
+  {"sql": "SELECT Campo1 FROM t_like2 WHERE Campo2 LIKE 'dd*'", "resultSet": true, "columnCount": 1, "columns": ["Campo1"], "columnTypes": [{"name": "Campo1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+    ["dd"],
+    ["dd"]
+  ]},
+  {"sql": "SELECT a1 FROM t_like1", "resultSet": true, "columnCount": 1, "columns": ["a1"], "columnTypes": [{"name": "a1", "jdbcType": 12, "typeName": "VARCHAR", "className": "java.lang.String"}], "rows": [
+  ]}
+]

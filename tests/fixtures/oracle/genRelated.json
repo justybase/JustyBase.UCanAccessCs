@@ -1,0 +1,41 @@
+{
+  "file": "genRelated.mdb",
+  "tables": [
+    {
+      "name": "t_child",
+      "structure": {"rowCount": 2, "columnCount": 3, "indexCount": 2},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "parent_id", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "note", "type": "TEXT", "length": 30, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]},
+        {"name": "t_parentt_child", "primaryKey": false, "foreignKey": true, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "parent_id", "ascending": true}]}
+      ],
+      "rows": [
+        [1,1,"child of one"],
+        [2,2,"child of two"]
+      ]
+    },
+    {
+      "name": "t_parent",
+      "structure": {"rowCount": 2, "columnCount": 2, "indexCount": 2},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "name", "type": "TEXT", "length": 30, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]},
+        {"name": ".rB", "primaryKey": false, "foreignKey": true, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]}
+      ],
+      "rows": [
+        [1,"parent one"],
+        [2,"parent two"]
+      ]
+    }
+  ],
+  "relationships": [
+    {"name": "t_parentt_child", "fromTable": "t_parent", "toTable": "t_child", "oneToOne": false, "referentialIntegrity": true, "cascadeUpdates": true, "cascadeDeletes": true, "cascadeNullOnDelete": false, "fromColumns": ["id"], "toColumns": ["parent_id"]}
+  ]
+}

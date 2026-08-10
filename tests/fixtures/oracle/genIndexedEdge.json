@@ -1,0 +1,32 @@
+{
+  "file": "genIndexedEdge.mdb",
+  "tables": [
+    {
+      "name": "t_edge",
+      "structure": {"rowCount": 4, "columnCount": 6, "indexCount": 5},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "first", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "last", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "val", "type": "DOUBLE", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "note", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "code", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]},
+        {"name": "idx_fullname", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "first", "ascending": true}, {"name": "last", "ascending": true}]},
+        {"name": "idx_val_desc", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "val", "ascending": false}]},
+        {"name": "idx_note_ignorenulls", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": true, "columns": [{"name": "note", "ascending": true}]},
+        {"name": "idx_code_required", "primaryKey": false, "foreignKey": false, "unique": false, "required": true, "ignoreNulls": false, "columns": [{"name": "code", "ascending": true}]}
+      ],
+      "rows": [
+        [1,"Jan","Kowalski",{"d": "0x400c000000000000"},"n1","C1"],
+        [2,"Anna","Nowak",{"d": "0xbff8000000000000"},null,"C2"],
+        [3,"Piotr","Wozniak",{"d": "0x0"},"n3","C3"],
+        [4,"Jan","Nowak",{"d": "0x4059000000000000"},null,"C4"]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

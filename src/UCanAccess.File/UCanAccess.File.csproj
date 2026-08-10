@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UCanAccess.File</RootNamespace>
+    <PackageId>JustyBase.UCanAccess.File</PackageId>
+    <PackageTags>access mdb accdb jet jackcess file-format</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UCanAccess.File.Tests" />
+    <InternalsVisibleTo Include="UCanAccess.Console" />
+    <InternalsVisibleTo Include="UCanAccess" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\ucanaccess-csharp-logo-transparent.png" Pack="true" PackagePath="docs\images\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\index_codes_genleg.txt" />
+    <EmbeddedResource Include="Resources\index_codes_ext_genleg.txt" />
+    <EmbeddedResource Include="Resources\index_codes_gen.txt" />
+    <EmbeddedResource Include="Resources\index_codes_ext_gen.txt" />
+    <EmbeddedResource Include="Resources\index_codes_gen_97.txt" />
+    <EmbeddedResource Include="Resources\index_mappings_ext_gen_97.txt" />
+    <EmbeddedResource Include="Resources\empty.mdb" />
+  <EmbeddedResource Include="Resources\empty2007.accdb" />
+  <EmbeddedResource Include="Resources\empty2010.accdb" />
+  <EmbeddedResource Include="Resources\empty2016.accdb" />
+  </ItemGroup>
+
+</Project>

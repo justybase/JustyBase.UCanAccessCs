@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UCanAccess</RootNamespace>
+    <PackageId>JustyBase.UCanAccessCs</PackageId>
+    <PackageTags>access mdb accdb ado.net jet jackcess ucanaccess sqlite</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UCanAccess.File\UCanAccess.File.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UCanAccess.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\images\ucanaccess-csharp-logo-transparent.png" Pack="true" PackagePath="docs\images\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="JustyBase.NetezzaSqlParser" Version="$(JustyBaseParserVersion)" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+</Project>

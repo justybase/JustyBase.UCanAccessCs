@@ -1,0 +1,22 @@
+{
+  "file": "weirdObjectNames.mdb",
+  "tables": [
+    {
+      "name": "19 MB 01 BEZAHLT ???",
+      "structure": {"rowCount": 1, "columnCount": 2, "indexCount": 2},
+      "columns": [
+        {"name": "ID", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "TextField", "type": "TEXT", "length": 510, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "ID", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "ID", "ascending": true}]},
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "ID", "ascending": true}]}
+      ],
+      "rows": [
+        [1,"foo"]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

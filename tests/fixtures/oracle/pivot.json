@@ -1,0 +1,25 @@
+{
+  "file": "pivot.mdb",
+  "tables": [
+    {
+      "name": "t_pivot",
+      "structure": {"rowCount": 4, "columnCount": 3, "indexCount": 1},
+      "columns": [
+        {"name": "c_cod", "type": "TEXT", "length": 100, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": true},
+        {"name": "c_val", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "c_dt", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "c_cod", "ascending": true}]}
+      ],
+      "rows": [
+        ["paperino",{"dec": ["44440000", 4]},{"dt": "2013-05-30T13:18:14"}],
+        ["piero",{"dec": ["330000", 4]},{"dt": "2013-01-30T13:18:14"}],
+        ["pippo",{"dec": ["1220000", 4]},{"dt": "2013-05-30T13:18:14"}],
+        ["pluto",{"dec": ["4430000", 4]},{"dt": "2013-01-30T13:18:14"}]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

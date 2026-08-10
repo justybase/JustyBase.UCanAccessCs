@@ -1,0 +1,25 @@
+# NuGet (dotnet)
+bin/
+obj/
+*.user
+.vs/
+**/TestResults/
+*.nupkg
+*.snupkg
+
+# Rider / IDEA
+.idea/
+
+# Java oracle build artifacts
+tools/JavaOracle/classes/
+
+# Tooling
+*.tmp
+*.err
+
+# MS Access lock files
+*.ldb
+*.laccdb
+
+# ad-hoc Polish sample database at the repo root (regenerate with tools/GeneratePolishSample)
+/database.accdb

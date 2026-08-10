@@ -1,0 +1,64 @@
+{
+  "file": "sqljoin.mdb",
+  "tables": [
+    {
+      "name": "t_detail",
+      "structure": {"rowCount": 12, "columnCount": 7, "indexCount": 2},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "master_id", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "qty", "type": "INT", "length": 2, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "price", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "dt", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "note", "type": "TEXT", "length": 60, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "code", "type": "TEXT", "length": 10, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]},
+        {"name": "t_mastert_detail", "primaryKey": false, "foreignKey": true, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "master_id", "ascending": true}]}
+      ],
+      "rows": [
+        [1,1,2,{"dec": ["105000", 4]},{"dt": "2021-01-05T09:00"},"first item","a01"],
+        [2,1,3,{"dec": ["-52500", 4]},{"dt": "2021-02-10T10:30"},null,"a02"],
+        [3,1,0,{"dec": ["0", 4]},{"dt": "2021-03-15T11:45:30"},"zero qty","a03"],
+        [4,2,10,{"dec": ["999900", 4]},{"dt": "1899-12-30T00:00"},"old date","b01"],
+        [5,2,1,{"dec": ["10000000", 4]},{"dt": "2022-06-30T23:59:59"},"big price","b02"],
+        [6,3,5,{"dec": ["77500", 4]},{"dt": "2023-01-01T00:00"},"gamma detail","c01"],
+        [7,4,2,{"dec": ["10000", 4]},{"dt": "2020-06-15T13:45:30"},"delta detail","d01"],
+        [8,null,null,null,null,null,null],
+        [9,5,100,{"dec": ["100", 4]},{"dt": "2024-12-31T12:00"},"new year","e01"],
+        [10,1,4,{"dec": ["25000", 4]},{"dt": "2021-05-20T14:15"},"first item again","a04"],
+        [11,2,8,{"dec": ["-2500", 4]},{"dt": "2022-01-15T09:09:09"},"neg price","b03"],
+        [12,7,6,{"dec": ["12345600", 4]},{"dt": "2010-05-15T08:30:15"},"seven detail","g01"]
+      ]
+    },
+    {
+      "name": "t_master",
+      "structure": {"rowCount": 7, "columnCount": 6, "indexCount": 2},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "name", "type": "TEXT", "length": 60, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "cat", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "active", "type": "BOOLEAN", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "created", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "budget", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]},
+        {"name": ".rB", "primaryKey": false, "foreignKey": true, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "id", "ascending": true}]}
+      ],
+      "rows": [
+        [1,"Alpha","A",true,{"dt": "2020-06-15T13:45:30"},{"dec": ["10000000", 4]}],
+        [2,"Beta","B",false,{"dt": "1899-12-30T00:00"},{"dec": ["-2507500", 4]}],
+        [3,"Gamma","A",true,{"dt": "2023-12-31T23:59:59"},{"dec": ["0", 4]}],
+        [4,"Delta","A",false,{"dt": "2000-01-01T12:00"},{"dec": ["123456789", 4]}],
+        [5,"Epsilon","B",true,{"dt": "1970-01-01T00:00:01"},{"dec": ["100", 4]}],
+        [6,null,null,false,null,null],
+        [7,"Alpha","C",true,{"dt": "2010-05-15T08:30:15"},{"dec": ["9999999900", 4]}]
+      ]
+    }
+  ],
+  "relationships": [
+    {"name": "t_mastert_detail", "fromTable": "t_master", "toTable": "t_detail", "oneToOne": false, "referentialIntegrity": true, "cascadeUpdates": true, "cascadeDeletes": true, "cascadeNullOnDelete": false, "fromColumns": ["id"], "toColumns": ["master_id"]}
+  ]
+}

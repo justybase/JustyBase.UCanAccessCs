@@ -1,0 +1,45 @@
+{
+  "file": "genIndexedAllTypes.mdb",
+  "tables": [
+    {
+      "name": "t_idx_alltypes",
+      "structure": {"rowCount": 5, "columnCount": 11, "indexCount": 12},
+      "columns": [
+        {"name": "b", "type": "BYTE", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "i", "type": "INT", "length": 2, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "l", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "m", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "f", "type": "FLOAT", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "d", "type": "DOUBLE", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "dt", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "bool", "type": "BOOLEAN", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "num", "type": "NUMERIC", "length": 17, "autoNumber": false, "calculated": false, "precision": 10, "scale": 2, "required": false},
+        {"name": "guid", "type": "GUID", "length": 16, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "txt", "type": "TEXT", "length": 20, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "idx_b", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "b", "ascending": true}]},
+        {"name": "idx_i", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "i", "ascending": true}]},
+        {"name": "idx_l", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "l", "ascending": true}]},
+        {"name": "idx_l_desc", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "l", "ascending": false}]},
+        {"name": "idx_m", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "m", "ascending": true}]},
+        {"name": "idx_f", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "f", "ascending": true}]},
+        {"name": "idx_d", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "d", "ascending": true}]},
+        {"name": "idx_dt", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "dt", "ascending": true}]},
+        {"name": "idx_bool", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "bool", "ascending": true}]},
+        {"name": "idx_num", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "num", "ascending": true}]},
+        {"name": "idx_guid", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "guid", "ascending": true}]},
+        {"name": "idx_txt", "primaryKey": false, "foreignKey": false, "unique": false, "required": false, "ignoreNulls": false, "columns": [{"name": "txt", "ascending": true}]}
+      ],
+      "rows": [
+        [1,10,100,{"dec": ["12500", 4]},{"f": "0x3fc00000"},{"d": "0x4004000000000000"},{"dt": "2020-01-02T03:04:05"},true,{"dec": ["1234", 2]},"{11111111-1111-1111-1111-111111111111}","alpha"],
+        [2,20,200,{"dec": ["-25000", 4]},{"f": "0xbfc00000"},{"d": "0xc004000000000000"},{"dt": "1999-12-31T23:59:59"},false,{"dec": ["-9999", 2]},"{22222222-2222-2222-2222-222222222222}","beta"],
+        [3,30,300,{"dec": ["0", 4]},{"f": "0x0"},{"d": "0x0"},{"dt": "1970-01-01T00:00"},true,{"dec": ["1", 2]},"{33333333-3333-3333-3333-333333333333}","gamma"],
+        [4,40,400,{"dec": ["999999900", 4]},{"f": "0x7f7fc99e"},{"d": "0x54b249ad2594c37d"},{"dt": "2023-06-15T08:30:15"},false,{"dec": ["123456789", 2]},"{44444444-4444-4444-4444-444444444444}",null],
+        [5,50,500,{"dec": ["100", 4]},{"f": "0xff7fc99e"},{"d": "0xd4b249ad2594c37d"},{"dt": "1899-12-30T00:00"},true,{"dec": ["0", 2]},"{55555555-5555-5555-5555-555555555555}","épsilon"]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

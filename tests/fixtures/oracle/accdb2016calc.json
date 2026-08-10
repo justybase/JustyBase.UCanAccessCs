@@ -1,0 +1,27 @@
+{
+  "file": "accdb2016calc.accdb",
+  "tables": [
+    {
+      "name": "t_people",
+      "structure": {"rowCount": 3, "columnCount": 7, "indexCount": 0},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "name", "type": "TEXT", "length": 60, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "age", "type": "INT", "length": 2, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "salary", "type": "MONEY", "length": 8, "autoNumber": false, "calculated": false, "precision": 19, "scale": 4, "required": false},
+        {"name": "joined", "type": "SHORT_DATE_TIME", "length": 8, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "active", "type": "BOOLEAN", "length": 1, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "AGE_TIMES_2", "type": "LONG", "length": 39, "autoNumber": false, "calculated": true, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1,"Anna Kowalska",34,{"dec": ["125005000", 4]},{"dt": "2020-06-15T09:30"},true,68],
+        [2,"Jan Nowak",41,{"dec": ["98000000", 4]},{"dt": "2018-02-01T08:00"},true,82],
+        [3,"Ewa Wiśniewska",29,{"dec": ["74007500", 4]},{"dt": "2023-11-20T12:15"},false,58]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

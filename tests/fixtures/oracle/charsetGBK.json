@@ -1,0 +1,21 @@
+{
+  "file": "charsetGBK.mdb",
+  "tables": [
+    {
+      "name": "table1",
+      "structure": {"rowCount": 1, "columnCount": 2, "indexCount": 1},
+      "columns": [
+        {"name": "ID", "type": "LONG", "length": 4, "autoNumber": true, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "field1", "type": "TEXT", "length": 10, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+        {"name": "PrimaryKey", "primaryKey": true, "foreignKey": false, "unique": true, "required": true, "ignoreNulls": false, "columns": [{"name": "ID", "ascending": true}]}
+      ],
+      "rows": [
+        [2,"GBK编码"]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}
