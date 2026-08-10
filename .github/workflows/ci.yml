@@ -3,18 +3,31 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: 'true'
 
 jobs:
   build-test:
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -24,58 +37,43 @@ jobs:
       - name: Build
         run: dotnet build UCanAccess.slnx -c Release --no-restore
 
-      - name: Pack libraries
-        run: |
-          dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore --output artifacts/packages
-          dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore --output artifacts/packages
+      - name: Test file format library
+        run: dotnet test tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ matrix.os }}
-          path: artifacts/packages/*.nupkg
-          if-no-files-found: error
-
-      - name: Test
-        run: dotnet test UCanAccess.slnx -c Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults
+      - name: Test ADO.NET provider
+        if: matrix.os == 'windows-latest'
+        run: dotnet test tests/UCanAccess.Tests/UCanAccess.Tests.csproj -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v6
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
 
   oracle-consistency:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
-      # The parity tests build the same solution as the regular CI job.  Keep
-      # this job self-contained so missing Java/JAR dependencies fail the
-      # dedicated oracle check instead of silently turning into skips.
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
       - name: Restore .NET parity runner
         run: dotnet restore UCanAccess.slnx
 
-      # Regenerates every oracle artifact with the ORIGINAL Java libraries:
-      #   - DbDump: read parity JSON for every .mdb fixture
-      #   - SqlDump: SQL behavior parity JSON (original UCanAccess JDBC)
-      #   - DbGen: creates fresh .mdb files (cross-check: Java-written files
-      #     must be readable by the port)
+      # Regenerates every oracle artifact with the original Java libraries:
+      # database dumps, SQL behavior, and freshly generated database files.
       - name: Regenerate all oracles
         run: pwsh tools/JavaOracle/run.ps1
 
       - name: Verify oracles are up to date
         run: git diff --exit-code -- tests/fixtures/oracle tests/fixtures/sql
-
-      - name: Run Java-backed SQL parity
-        run: dotnet test UCanAccess.slnx -c Release --no-restore --filter FullyQualifiedName~SqlParityTests

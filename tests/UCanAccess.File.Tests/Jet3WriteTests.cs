@@ -1,6 +1,5 @@
 using UCanAccess.File;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace UCanAccess.File.Tests;
 
@@ -14,11 +13,15 @@ public class Jet3WriteTests
 
     public Jet3WriteTests(ITestOutputHelper output) => _output = output;
 
+    private static void ConfigureCodePages()
+        => System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
     private static string Fixture(string name) => Path.Combine(AppContext.BaseDirectory, "fixtures", name);
 
     [Fact]
     public void Jet3_add_rows_roundtrip()
     {
+        ConfigureCodePages();
         string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_j3_{Guid.NewGuid():N}.mdb");
         System.IO.File.Copy(Fixture("size97.mdb"), tmp, true);
         try
@@ -48,6 +51,7 @@ public class Jet3WriteTests
     [Fact]
     public void Jet3_add_update_delete_readable_by_original_jackcess()
     {
+        ConfigureCodePages();
         if (!JavaAvailable())
         {
             _output.WriteLine("SKIPPED: java not available");

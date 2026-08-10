@@ -1,7 +1,6 @@
 using System.Data.Common;
 using System.Text.Json;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace UCanAccess.Tests;
 
