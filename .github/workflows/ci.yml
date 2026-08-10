@@ -3,18 +3,31 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: 'true'
 
 jobs:
   build-test:
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -24,53 +37,37 @@ jobs:
       - name: Build
         run: dotnet build UCanAccess.slnx -c Release --no-restore
 
-      - name: Pack libraries
-        run: |
-          dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore --output artifacts/packages
-          dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore --output artifacts/packages
-
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ matrix.os }}
-          path: artifacts/packages/*.nupkg
-          if-no-files-found: error
-
       - name: Test
-        run: dotnet test UCanAccess.slnx -c Release --no-build --collect:"XPlat Code Coverage" --results-directory TestResults
+        run: dotnet test UCanAccess.slnx -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v6
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
 
   oracle-consistency:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
-      # The parity tests build the same solution as the regular CI job.  Keep
-      # this job self-contained so missing Java/JAR dependencies fail the
-      # dedicated oracle check instead of silently turning into skips.
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
       - name: Restore .NET parity runner
         run: dotnet restore UCanAccess.slnx
 
-      # Regenerates every oracle artifact with the ORIGINAL Java libraries:
-      #   - DbDump: read parity JSON for every .mdb fixture
-      #   - SqlDump: SQL behavior parity JSON (original UCanAccess JDBC)
-      #   - DbGen: creates fresh .mdb files (cross-check: Java-written files
-      #     must be readable by the port)
+      # Regenerates every oracle artifact with the original Java libraries:
+      # database dumps, SQL behavior, and freshly generated database files.
       - name: Regenerate all oracles
         run: pwsh tools/JavaOracle/run.ps1
 

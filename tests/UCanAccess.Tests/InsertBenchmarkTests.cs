@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using UCanAccess.File;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace UCanAccess.Tests;
 

@@ -1,6 +1,5 @@
 using UCanAccess.File;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace UCanAccess.File.Tests;
 

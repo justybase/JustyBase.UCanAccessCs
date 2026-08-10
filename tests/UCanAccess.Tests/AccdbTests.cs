@@ -110,9 +110,11 @@ public class AccdbTests
                 Assert.Equal(2, t.RowCount);
             }
 
-            if (!JavaAvailable())
+            string jackJar = Path.Combine(Path.GetTempPath(), "ucanaccess-csharp-oracle", "jackcess-5.1.5.jar");
+            string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
+            if (!JavaAvailable() || !System.IO.File.Exists(jackJar) || !Directory.Exists(classesDir))
             {
-                throw Xunit.Sdk.SkipException.ForSkip("round-trip check requires java");
+                throw Xunit.Sdk.SkipException.ForSkip("oracle Java toolchain is not available");
             }
             string json = RunDbDump(tmp);
             Assert.Contains("t_new", json);
