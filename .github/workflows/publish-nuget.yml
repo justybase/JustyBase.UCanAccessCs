@@ -24,6 +24,10 @@ env:
 
 jobs:
   publish:
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -64,12 +68,18 @@ jobs:
           dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
           dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
 
+      - name: NuGet login (OIDC)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Push to NuGet.org
         shell: bash
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
-          test -n "$NUGET_API_KEY" || { echo "NUGET_API_KEY secret is missing" >&2; exit 1; }
+          test -n "$NUGET_API_KEY" || { echo "NuGet OIDC login did not return an API key" >&2; exit 1; }
           shopt -s nullglob
           packages=(artifacts/packages/*.nupkg)
           test "${#packages[@]}" -eq 2 || { echo "Expected two packages, found ${#packages[@]}" >&2; exit 1; }
