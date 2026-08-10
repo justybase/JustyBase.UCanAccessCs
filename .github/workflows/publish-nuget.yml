@@ -1,0 +1,56 @@
+name: publish-nuget
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version (overrides Directory.Build.props); empty = use tag name without 'v'"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore UCanAccess.slnx
+
+      - name: Build
+        run: dotnet build UCanAccess.slnx -c Release --no-restore
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          if (-not $version) { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
+          if (-not $version) { $version = '1.0.0' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Pack
+        run: |
+          dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
+          dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
+
+      - name: Push to NuGet
+        run: >
+          dotnet nuget push artifacts/packages/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error

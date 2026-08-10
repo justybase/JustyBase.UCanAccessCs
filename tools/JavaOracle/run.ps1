@@ -21,7 +21,8 @@ $oracleDir = Join-Path $fixturesDir "oracle"
 
 $jackVersion = "5.1.5"
 $m2 = "https://repo1.maven.org/maven2/io/github/spannm/jackcess/$jackVersion"
-$tmp = Join-Path $env:TEMP "ucanaccess-csharp-oracle"
+# $env:TEMP is not defined on Linux runners; use the cross-platform temp path.
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) "ucanaccess-csharp-oracle"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $jackJar = Join-Path $tmp "jackcess-$jackVersion.jar"
 if (-not (Test-Path $jackJar)) {
