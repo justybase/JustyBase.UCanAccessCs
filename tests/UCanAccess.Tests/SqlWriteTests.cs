@@ -396,6 +396,28 @@ public class SqlWriteTests
     }
 
     [Fact]
+    public void Delete_join_with_explicit_target_name_refreshes_the_target_table()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText =
+                    "DELETE t_detail FROM t_detail INNER JOIN t_master ON t_detail.master_id = t_master.id "
+                    + "WHERE t_master.cat = 'B'";
+                Assert.Equal(4, cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(8L, Scalar(conn, "SELECT count(*) FROM t_detail"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Cascade_dml_refreshes_dependent_mirror_tables()
     {
         string tmp = TempCopy(Fixture("generated/genRelated.mdb"));

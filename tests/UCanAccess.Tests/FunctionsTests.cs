@@ -106,6 +106,14 @@ public class FunctionsTests
         Assert.Equal("2020-01-08 00:00:00.000", ScalarAs<string>("SELECT #1/1/2020# + 7"));
         Assert.Equal("2019-12-30 00:00:00.000", ScalarAs<string>("SELECT #1/1/2020# - 2"));
         Assert.Equal(9.0, ScalarAs<double>("SELECT #1/10/2020# - #1/1/2020#"), 8);
+
+        using var conn = Open("sqljoin.mdb");
+        Assert.Equal("2021-01-14 09:00:00.000",
+            ScalarAs<string>("SELECT dt + 7 + 2 FROM t_detail WHERE id = 1", conn));
+        Assert.Throws<NotSupportedException>(() =>
+            Scalar("SELECT dt + qty FROM t_detail WHERE id = 1", conn));
+        Assert.Throws<NotSupportedException>(() =>
+            Scalar("SELECT dt + '7' FROM t_detail WHERE id = 1", conn));
     }
 
     [Fact]

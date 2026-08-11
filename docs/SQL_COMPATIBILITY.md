@@ -43,9 +43,15 @@ Expressions whose result type cannot be inferred as decimal retain SQLite's
 normal dynamic typing.
 
 Access date literals and date columns support serial-date arithmetic through
-provider date helpers, including `date_column + 1` and `date2 - date1`. Values
-returned through the ADO.NET reader remain timezone-free `DateTime` values with
-millisecond precision.
+provider date helpers, including `date_column + 1`, chained additions and
+`date2 - date1`. Unsupported combinations such as date plus a non-numeric
+column or string are rejected instead of being evaluated with SQLite's numeric
+coercion. Values returned through the ADO.NET reader remain timezone-free
+`DateTime` values with millisecond precision.
+
+Single-level foreign-key cascade updates and deletes refresh the affected mirror
+tables. Multi-level cascade updates (parent key -> child key -> grandchild key)
+are not currently supported.
 
 ## Access functions
 

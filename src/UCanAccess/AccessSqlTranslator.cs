@@ -539,6 +539,11 @@ public static class AccessSqlTranslator
 
             if (replacement == null)
             {
+                if (leftDate || rightDate)
+                {
+                    throw new NotSupportedException(
+                        $"Unsupported date arithmetic between '{left}' and '{right}'.");
+                }
                 continue;
             }
 
@@ -562,6 +567,14 @@ public static class AccessSqlTranslator
             && work[start + 2].Kind is Kind.Word or Kind.Ident)
         {
             return isDateColumn($"{work[start].Text}.{work[start + 2].Text}");
+        }
+        if (end - start >= 4
+            && work[start].Kind == Kind.Word
+            && work[start].Text.Equals("uca_date_add_days", StringComparison.OrdinalIgnoreCase)
+            && work[start + 1].Text == "("
+            && work[end - 1].Text == ")")
+        {
+            return true;
         }
         return false;
     }
