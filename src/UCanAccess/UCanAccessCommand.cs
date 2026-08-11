@@ -62,12 +62,29 @@ public sealed class UCanAccessCommand : DbCommand
 
     public override void Cancel()
     {
-        // There is no cancellable file operation underneath the mirror reader.
-        // Keep an active reader usable, matching the provider's previous behavior.
+        _connection?.MirrorIfCreated?.CancelActiveCommands();
     }
 
     public override void Prepare()
     {
+        UCanAccessConnection connection = _connection
+            ?? throw new InvalidOperationException("The command has no associated connection.");
+        if (connection.State != ConnectionState.Open)
+        {
+            throw new InvalidOperationException("The connection is not open.");
+        }
+        connection.EnsureDatabaseCurrent();
+        Mirror mirror = connection.Mirror;
+        AccessSqlTranslator.Translate(CommandText, out int parameterCount, out IReadOnlyList<string>? names,
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+        if (parameterCount == 0 && _parameters.Count != 0)
+        {
+            throw new InvalidOperationException("The command has parameters, but its SQL contains no placeholders.");
+        }
+        if (names != null && names.Count != parameterCount)
+        {
+            throw new InvalidOperationException("The command contains an inconsistent parameter declaration.");
+        }
     }
 
     protected override DbConnection? DbConnection
@@ -107,13 +124,33 @@ public sealed class UCanAccessCommand : DbCommand
     {
         UCanAccessConnection connection = _connection
             ?? throw new InvalidOperationException("The command has no associated connection.");
+        connection.EnsureDatabaseCurrent();
         if (connection.State != ConnectionState.Open)
         {
             throw new InvalidOperationException("The connection is not open.");
         }
 
-        // batch: multiple statements separated by ';' are executed sequentially
-        string[] statements = SplitStatements(CommandText ?? string.Empty);
+        // A sequence of DML statements is staged once. This preserves
+        // autocommit atomicity while avoiding one source-file copy per statement.
+        string[] statements = SplitStatements(CommandText ?? string.Empty)
+            .Select(StripLeadingComments)
+            .Select(statement => statement.Trim())
+            .Where(statement => statement.Length != 0)
+            .ToArray();
+        bool allDml = statements.Length > 0
+            && statements.All(statement => FirstWord(statement) is "INSERT" or "UPDATE" or "DELETE");
+        if (GetTransaction(connection) == null && allDml
+            && (statements.Length == 1 || _parameters.Count == 0))
+        {
+            var batch = new List<(string Sql, IReadOnlyList<object?>? Parameters)>(statements.Length);
+            foreach (string statement in statements)
+            {
+                IReadOnlyList<object?>? parameters = BindDmlParameters(statement,
+                    _parameters.Cast<UCanAccessParameter>().ToList());
+                batch.Add((statement, parameters));
+            }
+            return connection.ExecuteDmlBatchAtomically(batch);
+        }
         int total = 0;
         foreach (string statement in statements)
         {
@@ -142,18 +179,7 @@ public sealed class UCanAccessCommand : DbCommand
                 return transaction.AddPending(sql, parameters);
             }
 
-            Mirror? transientMirror = null;
-            try
-            {
-                Mirror mirror = connection.KeepMirror
-                    ? connection.Mirror
-                    : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase);
-                return AccessDml.Execute(connection.AccessDatabase, mirror, sql, parameters);
-            }
-            finally
-            {
-                transientMirror?.Dispose();
-            }
+            return connection.ExecuteDmlAtomically(sql, parameters);
         }
         if (kind is "CREATE" or "DROP" or "ALTER")
         {
@@ -172,7 +198,9 @@ public sealed class UCanAccessCommand : DbCommand
                 Mirror mirror = connection.KeepMirror
                     ? connection.Mirror
                     : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase);
-                return AccessDdl.Execute(connection.AccessDatabase, mirror, sql);
+                int result = AccessDdl.Execute(connection.AccessDatabase, mirror, sql);
+                connection.MarkDatabaseCurrent();
+                return result;
             }
             finally
             {
@@ -437,6 +465,7 @@ public sealed class UCanAccessCommand : DbCommand
     {
         UCanAccessConnection connection = _connection
             ?? throw new InvalidOperationException("The command has no associated connection.");
+        connection.EnsureDatabaseCurrent();
         if (connection.State != ConnectionState.Open)
         {
             throw new InvalidOperationException("The connection is not open.");
@@ -456,7 +485,7 @@ public sealed class UCanAccessCommand : DbCommand
         {
             string translatedValueQuery = AccessSqlTranslator.Translate(valueQuery,
                 out int valueParameterCount, out IReadOnlyList<string>? valueNames,
-                queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn);
+                queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn);
             object?[]? valueParameters = BindQueryParameters(valueParameterCount, valueNames, suppliedParameters);
             var pivotValues = new List<object?>();
             using (MirrorReader valueReader = queryMirror.ExecuteReader(translatedValueQuery, valueParameters,
@@ -474,7 +503,7 @@ public sealed class UCanAccessCommand : DbCommand
         }
 
         string sql = AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
-            queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn);
+            queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn);
         object?[]? parameters = null;
         if (parameterCount > 0)
         {

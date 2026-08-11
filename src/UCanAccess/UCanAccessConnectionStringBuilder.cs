@@ -61,6 +61,24 @@ public sealed class UCanAccessConnectionStringBuilder : DbConnectionStringBuilde
         set => this["Keep Mirror"] = value;
     }
 
+    public string MirrorMode
+    {
+        get => TryGetValue("Mirror Mode", out object? value) ? value?.ToString() ?? "memory" : "memory";
+        set => this["Mirror Mode"] = value;
+    }
+
+    public string? MirrorPath
+    {
+        get => TryGetValue("Mirror Path", out object? value) ? value?.ToString() : null;
+        set => this["Mirror Path"] = value;
+    }
+
+    public string? MirrorFolder
+    {
+        get => TryGetValue("Mirror Folder", out object? value) ? value?.ToString() : null;
+        set => this["Mirror Folder"] = value;
+    }
+
     public string? TimeZone
     {
         get => TryGetValue("Time Zone", out object? value) ? value?.ToString() : null;

@@ -56,6 +56,13 @@ public class SqlWriteTests
         cmd.ExecuteNonQuery();
     }
 
+    private static int ExecAndReturn(DbConnection conn, string sql)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd.ExecuteNonQuery();
+    }
+
     private static object? Scalar(DbConnection conn, string sql)
     {
         using var cmd = conn.CreateCommand();
@@ -179,6 +186,94 @@ public class SqlWriteTests
     }
 
     [Fact]
+    public void Insert_exposes_generated_numeric_autonumber()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO t_empty (name) VALUES ('generated')";
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+            Assert.Equal(1L, ((UCanAccessConnection)conn).LastInsertedId);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Failed_multirow_insert_does_not_leave_partial_rows()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_atomic (id INTEGER NOT NULL, name TEXT(20))");
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "INSERT INTO t_atomic (id, name) VALUES (1, 'valid'), (NULL, 'invalid')";
+                Assert.ThrowsAny<Exception>(() => cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(0L, Scalar(conn, "SELECT count(*) FROM t_atomic"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Read_only_connection_rejects_atomic_dml_before_staging()
+    {
+        using var conn = UCanAccessFactory.Instance.CreateConnection()!;
+        conn.ConnectionString = $"Data Source={Fixture("generated/genEmpty.mdb")};Read Only=true";
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO t_empty (name) VALUES ('forbidden')";
+        Assert.Throws<UCanAccess.File.DatabaseException>(() => cmd.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void Dml_uses_sql_three_valued_null_semantics()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "DELETE FROM t_detail WHERE price NOT IN (1, NULL)";
+                Assert.Equal(0, cmd.ExecuteNonQuery());
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE t_detail SET note = 'wrong' WHERE NOT (price = NULL)";
+                Assert.Equal(0, cmd.ExecuteNonQuery());
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE t_detail SET note = 'not-null' WHERE note NOT LIKE 'missing%'";
+                Assert.Equal(10, cmd.ExecuteNonQuery());
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT count(*) FROM t_detail WHERE note IS NULL";
+                Assert.Equal(2L, cmd.ExecuteScalar());
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Update_with_exists_subquery()
     {
         string tmp = TempCopy(Fixture("sqljoin.mdb"));
@@ -201,6 +296,119 @@ public class SqlWriteTests
                 cmd.CommandText = "UPDATE t_detail SET note = 'nope' WHERE EXISTS (SELECT 1 FROM t_master WHERE cat = 'zzz')";
                 Assert.Equal(0, cmd.ExecuteNonQuery());
             }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Update_supports_correlated_subqueries_and_access_expressions()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            long expected = Convert.ToInt64(Scalar(conn,
+                "SELECT count(*) FROM t_detail WHERE EXISTS "
+                + "(SELECT 1 FROM t_master WHERE t_master.id = t_detail.master_id AND t_master.cat = 'A')"));
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText =
+                    "UPDATE t_detail SET note = UCase(note) WHERE EXISTS "
+                    + "(SELECT 1 FROM t_master WHERE t_master.id = t_detail.master_id AND t_master.cat = 'A')";
+                Assert.Equal(expected, cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(expected, Scalar(conn, "SELECT count(*) FROM t_detail WHERE note = UCase(note) AND EXISTS "
+                + "(SELECT 1 FROM t_master WHERE t_master.id = t_detail.master_id AND t_master.cat = 'A')"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Update_join_uses_source_values_and_updates_each_target_once()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText =
+                    "UPDATE t_detail INNER JOIN t_master ON t_detail.master_id = t_master.id "
+                    + "SET t_detail.note = t_master.name WHERE t_master.id = 1";
+                Assert.Equal(4, cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(4L, Scalar(conn, "SELECT count(*) FROM t_detail WHERE note = 'Alpha'"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Update_join_with_unqualified_set_uses_the_target_table()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText =
+                    "UPDATE t_detail INNER JOIN t_master ON t_detail.master_id = t_master.id "
+                    + "SET note = t_master.name WHERE t_master.id = 2";
+                Assert.Equal(3, cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(3L, Scalar(conn, "SELECT count(*) FROM t_detail WHERE note = 'Beta'"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Delete_join_removes_only_matching_target_rows()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText =
+                    "DELETE FROM t_detail INNER JOIN t_master ON t_detail.master_id = t_master.id "
+                    + "WHERE t_master.cat = 'B'";
+                Assert.Equal(4, cmd.ExecuteNonQuery());
+            }
+            Assert.Equal(8L, Scalar(conn, "SELECT count(*) FROM t_detail"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Cascade_dml_refreshes_dependent_mirror_tables()
+    {
+        string tmp = TempCopy(Fixture("generated/genRelated.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "DELETE FROM t_parent WHERE id = 2");
+
+            Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_parent"));
+            Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_child"));
+
+            Exec(conn, "UPDATE t_parent SET id = 3 WHERE id = 1");
+            Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_child WHERE parent_id = 3"));
         }
         finally
         {
@@ -415,6 +623,32 @@ public class SqlWriteTests
     }
 
     [Fact]
+    public void Dml_rejects_an_active_reader_before_mutating_the_file()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using var select = conn.CreateCommand();
+            select.CommandText = "SELECT id FROM t_detail";
+            using DbDataReader reader = select.ExecuteReader();
+            Assert.True(reader.Read());
+
+            using var update = conn.CreateCommand();
+            update.CommandText = "UPDATE t_detail SET note = 'blocked' WHERE id = 1";
+            Assert.Throws<InvalidOperationException>(() => update.ExecuteNonQuery());
+
+            reader.Dispose();
+            Assert.Equal(1, ExecAndReturn(conn, "UPDATE t_detail SET note = 'allowed' WHERE id = 1"));
+            Assert.Equal("allowed", Scalar(conn, "SELECT note FROM t_detail WHERE id = 1"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Jackcess_reads_sql_written_file()
     {
         if (!JavaAvailable())
@@ -577,6 +811,32 @@ public class SqlWriteTests
                 }
                 Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_empty"));
             }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Transaction_commit_rejects_a_changed_source_file()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using var tx = conn.BeginTransaction();
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "INSERT INTO t_empty (name) VALUES ('staged')";
+                Assert.Equal(1, cmd.ExecuteNonQuery());
+            }
+
+            DateTime originalWriteTime = System.IO.File.GetLastWriteTimeUtc(tmp);
+            System.IO.File.SetLastWriteTimeUtc(tmp, originalWriteTime.AddMinutes(1));
+            Assert.Throws<IOException>(() => tx.Commit());
+            Assert.Equal(0L, Scalar(conn, "SELECT count(*) FROM t_empty"));
         }
         finally
         {

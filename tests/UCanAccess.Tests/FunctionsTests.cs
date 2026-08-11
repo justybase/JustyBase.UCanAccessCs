@@ -101,6 +101,14 @@ public class FunctionsTests
     }
 
     [Fact]
+    public void Date_arithmetic_preserves_access_serial_date_semantics()
+    {
+        Assert.Equal("2020-01-08 00:00:00.000", ScalarAs<string>("SELECT #1/1/2020# + 7"));
+        Assert.Equal("2019-12-30 00:00:00.000", ScalarAs<string>("SELECT #1/1/2020# - 2"));
+        Assert.Equal(9.0, ScalarAs<double>("SELECT #1/10/2020# - #1/1/2020#"), 8);
+    }
+
+    [Fact]
     public void Format_masks_match_ucanaccess()
     {
         using var conn = Open("sqljoin.mdb");
@@ -164,6 +172,7 @@ public class FunctionsTests
         Assert.Equal(124L, ScalarAs<long>("SELECT DSum('qty', 't_detail', 'qty > 5')", conn));
         Assert.Equal(0L, ScalarAs<long>("SELECT DCount('qty', 't_detail', 'master_id = 99')", conn));
         Assert.Equal(10L, ScalarAs<long>("SELECT DMax('qty', 't_detail', 'master_id = 2')", conn));
+        Assert.Equal(4L, ScalarAs<long>("SELECT DCount('code', 't_detail', \"code LIKE 'a*'\")", conn));
         Assert.Equal(-0.25, ScalarAs<double>("SELECT DMin('price', 't_detail', 'master_id = 2')", conn), 6);
         Assert.Equal(1.9375, ScalarAs<double>("SELECT DAvg('price', 't_detail', 'master_id = 1')", conn), 6);
         Assert.Equal("Gamma", ScalarAs<string>("SELECT DLookup('name', 't_master', 'id = 3')", conn));
@@ -267,6 +276,21 @@ public class FunctionsTests
         Assert.Equal(300.0, ScalarAs<double>("SELECT SYD(1000, 100, 5, 1)"), 6);
         // PMT: 10% per period is represented as 0.10 by Access/UCanAccess.
         Assert.Equal(-146.76331510, ScalarAs<double>("SELECT PMT(0.1, 12, 1000)"), 4);
+    }
+
+    [Fact]
+    public void Extended_access_functions_are_available()
+    {
+        using var conn = Open("sqljoin.mdb");
+        Assert.Equal(2L, ScalarAs<long>("SELECT CByte(2.5)", conn));
+        Assert.Equal(2.56198347107438, ScalarAs<double>("SELECT NPV(0.1, 1, 2)", conn), 8);
+        Assert.Equal(3L, ScalarAs<long>("SELECT Eval('1 + 2')", conn));
+        double expectedStDev = Convert.ToDouble(Scalar("SELECT StDev(qty) FROM t_detail WHERE master_id = 1", conn));
+        double expectedVar = Convert.ToDouble(Scalar("SELECT Var(qty) FROM t_detail WHERE master_id = 1", conn));
+        Assert.Equal(expectedStDev,
+            ScalarAs<double>("SELECT DStDev('qty', 't_detail', 'master_id = 1')", conn), 8);
+        Assert.Equal(expectedVar,
+            ScalarAs<double>("SELECT DVar('qty', 't_detail', 'master_id = 1')", conn), 8);
     }
 
     [Fact]

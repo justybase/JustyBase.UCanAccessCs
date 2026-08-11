@@ -15,6 +15,9 @@ namespace UCanAccess;
 ///   Column Order                           -- "natural" (default) or "display"
 ///   Lazy Load                              -- load linked tables on demand (default true)
 ///   Keep Mirror                            -- keep the SQLite mirror cached (default true)
+///   Mirror Mode                            -- "memory" (default) or "file"
+///   Mirror Path                            -- SQLite file used by file mode
+///   Mirror Folder                          -- folder for an automatically named file mirror
 ///   Time Zone                              -- accepted for compatibility; Access values remain timezone-free
 ///   Prefer Date Timestamp                  -- accepted for compatibility; Access values retain provider precision
 ///   New Database Version                   -- version for created databases (2000/2002/2003/2007/2010/2016)
@@ -42,6 +45,12 @@ public sealed class UCanAccessConnectionString
         ["lazyload"] = "lazyload",
         ["keep mirror"] = "keepmirror",
         ["keepmirror"] = "keepmirror",
+        ["mirror mode"] = "mirrormode",
+        ["mirrormode"] = "mirrormode",
+        ["mirror path"] = "mirrorpath",
+        ["mirrorpath"] = "mirrorpath",
+        ["mirror folder"] = "mirrorfolder",
+        ["mirrorfolder"] = "mirrorfolder",
         ["time zone"] = "timezone",
         ["timezone"] = "timezone",
         ["prefer date timestamp"] = "preferdatetimestamp",
@@ -105,6 +114,20 @@ public sealed class UCanAccessConnectionString
     /// <summary>whether the SQLite mirror is retained for the connection lifetime</summary>
     public bool KeepMirror
         => GetBoolean("keepmirror", defaultValue: true);
+
+    /// <summary>SQLite mirror storage mode: memory (default) or file.</summary>
+    public string MirrorMode
+        => _values.TryGetValue("mirrormode", out string? value) && value.Trim().Length > 0
+            ? value.Trim()
+            : "memory";
+
+    /// <summary>explicit SQLite mirror path used when <see cref="MirrorMode"/> is file</summary>
+    public string? MirrorPath
+        => _values.TryGetValue("mirrorpath", out string? value) && value.Length > 0 ? value : null;
+
+    /// <summary>folder for an automatically named file mirror</summary>
+    public string? MirrorFolder
+        => _values.TryGetValue("mirrorfolder", out string? value) && value.Length > 0 ? value : null;
 
     /// <summary>optional date/time zone identifier</summary>
     public string? TimeZoneName

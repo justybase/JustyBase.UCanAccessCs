@@ -1,6 +1,8 @@
 # Regenerates the Java "oracle" JSON files used by the differential tests.
 #
-# Requires: JDK 11+ on PATH and the jackcess-5.1.5.jar (auto-downloaded to a temp dir).
+# Requires: any JDK distribution version 11+ and the jackcess-5.1.5.jar
+# (auto-downloaded to a temp dir). Java is resolved from UCANACCESS_JAVA /
+# UCANACCESS_JAVAC, JAVA_HOME, or PATH; no vendor-specific JDK is required.
 #
 # Usage:
 #   pwsh tools/JavaOracle/run.ps1            # regenerate all oracle JSONs
@@ -11,6 +13,55 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-JavaTool([string]$toolName, [string]$overrideVariable) {
+    $override = [Environment]::GetEnvironmentVariable($overrideVariable)
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        return $override
+    }
+
+    $suffix = if ($IsWindows) { ".exe" } else { "" }
+    foreach ($homeVariable in @("UCANACCESS_JAVA_HOME", "JAVA_HOME", "JDK_HOME")) {
+        $javaHome = [Environment]::GetEnvironmentVariable($homeVariable)
+        if ([string]::IsNullOrWhiteSpace($javaHome)) {
+            continue
+        }
+        $candidate = Join-Path (Join-Path $javaHome "bin") ($toolName + $suffix)
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    return $toolName
+}
+
+function Get-JavaMajorVersion([string]$command) {
+    try {
+        $versionText = (& $command "-version" 2>&1 | Out-String)
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        throw "A compatible Java JDK 11+ is required. Could not execute '$command'."
+    }
+    if ($exitCode -ne 0) {
+        throw "A compatible Java JDK 11+ is required. '$command -version' failed."
+    }
+
+    $match = [regex]::Match($versionText, '(?m)(?:version\s+|javac\s+)[\"]?(?<major>\d+)')
+    if (-not $match.Success) {
+        throw "Could not determine the Java version reported by '$command'."
+    }
+    return [int]$match.Groups["major"].Value
+}
+
+$javaCommand = Resolve-JavaTool "java" "UCANACCESS_JAVA"
+$javacCommand = Resolve-JavaTool "javac" "UCANACCESS_JAVAC"
+$javaMajor = Get-JavaMajorVersion $javaCommand
+$javacMajor = Get-JavaMajorVersion $javacCommand
+if ($javaMajor -lt 11 -or $javacMajor -lt 11) {
+    throw "Java 11 or newer is required; found runtime $javaMajor and compiler $javacMajor."
+}
+Write-Host "Using Java runtime '$javaCommand' (version $javaMajor) and compiler '$javacCommand' (version $javacMajor)."
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $toolDir = Join-Path (Join-Path $repo "tools") "JavaOracle"
@@ -63,8 +114,8 @@ $compileArgs = @(
     "-cp", $jackJar,
     "-d", $classesDir
 ) + $javaSources
-& javac @compileArgs
-# JDK 21 on Windows can print an AccessDeniedException while closing the
+& $javacCommand @compileArgs
+# Some JDKs on Windows can print an AccessDeniedException while closing the
 # ZipFS classpath, after it has already emitted all class files and returned 0.
 # A real compilation failure still returns non-zero; the marker also prevents
 # a silent partial compilation from reaching the runtime steps.
@@ -78,7 +129,7 @@ function Invoke-Oracle([string]$mdb) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($mdb)
     $json = Join-Path $oracleDir "$name.json"
     Write-Host "Oracle: $name"
-    & java "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" "-Djackcess.charset.VERSION_3=GBK" `
+    & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" "-Djackcess.charset.VERSION_3=GBK" `
         -cp (Join-ClassPath @($jackJar, $classesDir)) DbDump $mdb $json
     if ($LASTEXITCODE -ne 0) { throw "oracle failed for $mdb" }
 }
@@ -107,7 +158,7 @@ if (Test-Path $sqlDir) {
         if (Test-Path $mdb) {
             $out = Join-Path $sqlDir "$corpus.java.json"
             Write-Host "SqlDump: $corpus"
-            & java "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" -cp $sqlCp SqlDump $mdb $_.FullName $out
+            & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" -cp $sqlCp SqlDump $mdb $_.FullName $out
             if ($LASTEXITCODE -ne 0) { throw "sqldump failed for $corpus" }
         }
     }
@@ -123,9 +174,9 @@ $tempGenDir = Join-Path $tmp "generated"
 New-Item -ItemType Directory -Force -Path $tempGenDir | Out-Null
 foreach ($gen in @("genAllTypes", "genIndexed", "genEmpty", "genIndexedAllTypes", "genRelated", "genIndexedEdge")) {
     Write-Host "DbGen: $gen"
-    & java -cp (Join-ClassPath @($jackJar, $classesDir)) DbGen $tempGenDir $gen
+    & $javaCommand -cp (Join-ClassPath @($jackJar, $classesDir)) DbGen $tempGenDir $gen
     if ($LASTEXITCODE -ne 0) { throw "dbgen failed for $gen" }
-    & java "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" "-Djackcess.charset.VERSION_3=GBK" -cp (Join-ClassPath @($jackJar, $classesDir)) `
+    & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" "-Djackcess.charset.VERSION_3=GBK" -cp (Join-ClassPath @($jackJar, $classesDir)) `
         DbDump (Join-Path $tempGenDir "$gen.mdb") (Join-Path $oracleDir "$gen.json")
     if ($LASTEXITCODE -ne 0) { throw "oracle failed for $gen" }
 }

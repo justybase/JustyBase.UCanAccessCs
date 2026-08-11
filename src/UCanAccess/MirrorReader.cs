@@ -84,27 +84,8 @@ public sealed class MirrorReader : DbDataReader
     private object ConvertValue(int ordinal, object value)
     {
         DataType? type = GetColumnType(ordinal);
-        if (type == null && _isExactDecimalResult?.Invoke(ordinal) == true)
-        {
-            return decimal.Parse(value.ToString()!, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture);
-        }
-        return type switch
-        {
-            DataType.Boolean => Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Byte => Convert.ToByte(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Int => Convert.ToInt16(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Long => Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.BigInt => Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Float => Convert.ToSingle(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Double => Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.Money or DataType.Numeric => Convert.ToDecimal(value, System.Globalization.CultureInfo.InvariantCulture),
-            DataType.ComplexType when value is string json => ComplexValueJson.Deserialize(json) ?? DBNull.Value,
-            DataType.ShortDateTime or DataType.ExtDateTime => value is DateTime
-                ? value
-                : DateTime.Parse(value.ToString()!, System.Globalization.CultureInfo.InvariantCulture),
-            _ => value,
-        };
+        return AccessValueCodec.ConvertFromSqlite(value, type, type == null
+            && _isExactDecimalResult?.Invoke(ordinal) == true);
     }
 
     private string DataTypeName(int ordinal)
@@ -197,6 +178,8 @@ public sealed class MirrorReader : DbDataReader
             DataType.Money or DataType.Numeric => typeof(decimal),
             DataType.ComplexType => typeof(object),
             DataType.ShortDateTime or DataType.ExtDateTime => typeof(DateTime),
+            DataType.Guid => typeof(Guid),
+            DataType.Binary or DataType.Ole => typeof(byte[]),
             _ => _isExactDecimalResult?.Invoke(ordinal) == true ? typeof(decimal) : _inner.GetFieldType(ordinal),
         };
 
@@ -230,7 +213,14 @@ public sealed class MirrorReader : DbDataReader
 
     public override int GetOrdinal(string name) => _inner.GetOrdinal(name);
 
-    public override string GetString(int ordinal) => _inner.GetString(ordinal);
+    public override string GetString(int ordinal)
+    {
+        object value = GetValue(ordinal);
+        return value is string text
+            ? text
+            : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+                ?? string.Empty;
+    }
 
     public override object GetValue(int ordinal)
     {

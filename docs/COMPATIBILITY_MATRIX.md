@@ -25,15 +25,15 @@ misleading name.
 | SELECT, joins, grouping, CTE, set operators | Supported | SQL oracle corpus | Add parameterized corpus cases |
 | Window functions | Supported | `WindowFunctionTests` | Add type/null/error parity |
 | `TRANSFORM/PIVOT` | Partial | `CrosstabTests`, translator tests, and `pivot.sql`; explicit `IN (...)` plus inline dynamic forms | Add parameterized saved-QueryDef coverage and richer Access crosstab grammar |
-| INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` | Add Java behavioral oracle for DML |
+| INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases | Add larger Java behavioral oracle for DML |
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
 | `ALTER TABLE` | Partial | Safe recreation tests | Expand supported table shapes |
 | `CREATE/DROP INDEX` | Supported | Index mutation tests | Add shared relationship index cases |
 | `CREATE/DROP VIEW` | Unsupported | Explicit rejection | Persist saved SELECT definitions |
 | Saved SELECT queries | Partial | Read-only mirror views | Add write lifecycle |
-| Linked tables | Supported | Linked read/write tests | Add remap and concurrency tests |
-| Access functions | Partial | Scalar/aggregate/domain registrations and function tests | Generate a complete parity catalog |
+| Linked tables | Supported | Linked read/write tests; non-atomic direct fallback is explicit | Add remap and concurrency tests |
+| Access functions | Partial | Scalar/aggregate/domain registrations, EVAL/financial/statistical extensions and function tests | Generate a complete parity catalog |
 | User-defined scalar functions | Supported | `UCanAccessConnection.RegisterFunction` and function tests | Add an aggregate registration API if needed |
 | Complex types/attachments | Partial | `ComplexTypeTests`, `ComplexTypeProviderTests`, real COM-generated ACCDB fixture; typed arrays and child-table writes | Add version-history and more attachment metadata fixtures; keep complex-field DDL out of scope |
 | Password/encrypted files | Partial | `EncryptionTests`; password masking and `IAccessDatabaseOpener` boundary | Provide a separately maintained codec adapter for real encrypted files |
@@ -48,7 +48,7 @@ misleading name.
 | Transactions | Supported | Atomic staging and transaction tests | Add linked-table cases |
 | Savepoints | Supported | `DbTransaction.Save`/rollback-to-savepoint snapshot tests | Add savepoint stress/cleanup cases |
 | `GetSchema` core collections | Partial | Add primary/foreign key, index-column and restriction coverage |
-| Connection pooling | N/A/undocumented | Document ownership and test concurrent connections |
+| Connection pooling | N/A/undocumented | Provider-owned SQLite file mirrors disable SQLite pooling to release files deterministically |
 | Updatable JDBC `ResultSet` | N/A | Use ADO.NET DML commands as the supported alternative |
 
 ## Connection-string surface
@@ -60,13 +60,14 @@ misleading name.
 | Encoding/Code Page | Supported | Especially relevant to Jet 3 |
 | Show Schema, Column Order | Supported | Tested in metadata/query paths |
 | Lazy Load, Keep Mirror | Supported | In-memory mirror semantics are .NET-specific |
+| Mirror Mode, Mirror Path, Mirror Folder | Supported | `memory` is default; `file` uses a provider-owned SQLite cache |
 | Allow External Links | Supported | Disabled by default for path safety |
 | New Database Version | Supported | 2000/2002/2003/2007/2010/2016 |
 | Time Zone/Prefer Date Timestamp | Partial | Accepted for compatibility; Access values remain `DateTime` |
 | Remap | Planned | Add safe path remapping for linked databases |
 | Skip Indexes | Planned | Optimize mirror construction without changing file data |
 | Open Exclusive | Planned | Make locking mode explicit and testable |
-| Mirror Path/Disk Mirror | Planned | Add only if a stable disk-mirror contract is required |
+| Mirror Path/Disk Mirror | Supported | Superseded by `Mirror Mode=file`, `Mirror Path` and `Mirror Folder` |
 | Java/HSQLDB-only options | N/A | Do not expose false-compatible knobs |
 
 ## Evidence rule

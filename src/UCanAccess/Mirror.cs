@@ -25,17 +25,24 @@ public sealed class Mirror : IDisposable
     private readonly SqliteConnection _domainConnection;
     private readonly bool _includeSystem;
     private readonly bool _displayOrder;
+    private readonly string? _storagePath;
+    private readonly bool _deleteStorageOnDispose;
     private readonly HashSet<SqliteCommand> _commands = new();
     private readonly Dictionary<string, string> _tableNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DataType> _columnTypes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<long, Table.RowLocation>> _rowLocators = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _booleanColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nonBooleanColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedBooleanColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _moneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nonMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _dateColumns = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _nonDateColumns = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _qualifiedDateColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _loadedTables = new();
     private readonly List<string> _viewNames = new();
+    private readonly List<string> _diagnostics = new();
     private readonly object _sync = new();
     private bool _disposed;
 
@@ -43,19 +50,39 @@ public sealed class Mirror : IDisposable
     /// Creates the mirror: builds the SQLite schema from the Access schema and loads all data.
     /// </summary>
     /// <param name="displayOrder">order columns by their Access display order instead of natural file order</param>
-    public Mirror(File.Database accessDb, bool includeSystem = false, bool displayOrder = false)
+    public Mirror(File.Database accessDb, bool includeSystem = false, bool displayOrder = false,
+        bool buildSavedQueries = true, string? storagePath = null, bool deleteStorageOnDispose = false)
     {
         _accessDb = accessDb;
         _includeSystem = includeSystem;
         _displayOrder = displayOrder;
+        _storagePath = storagePath;
+        _deleteStorageOnDispose = deleteStorageOnDispose;
         // A named shared-cache in-memory database lets the Access domain functions
         // (DCount/DLookup/...) run their own subqueries on a second connection
         // while the outer query's reader is still active on the main connection.
-        string dbId = $"file:ucanaccess_{Guid.NewGuid():N}?mode=memory&cache=shared";
-        _connection = new SqliteConnection($"Data Source={dbId}");
-        _domainConnection = new SqliteConnection($"Data Source={dbId}");
+        string dbId = storagePath == null
+            ? $"file:ucanaccess_{Guid.NewGuid():N}?mode=memory&cache=shared"
+            : storagePath;
+        if (storagePath != null)
+        {
+            string? directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(storagePath));
+            if (directory != null)
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+        string sqliteConnectionString = storagePath == null
+            ? $"Data Source={dbId}"
+            : $"Data Source={dbId};Cache=Shared;Pooling=False";
+        _connection = new SqliteConnection(sqliteConnectionString);
+        _domainConnection = new SqliteConnection(sqliteConnectionString);
         _connection.Open();
         _domainConnection.Open();
+        if (storagePath != null)
+        {
+            ClearFileStorage();
+        }
         // the original UCanAccess compares text case-insensitively by default
         // (HSQLDB SQL_TEXT_UCC collation); match that for text columns
         _connection.CreateCollation(CaseInsensitiveCollation,
@@ -64,7 +91,7 @@ public sealed class Mirror : IDisposable
             (x, y) => ExactDecimalSql.CompareTextForCollation(x, y));
         try
         {
-            BuildSchemaAndLoad();
+            BuildSchemaAndLoad(buildSavedQueries);
         }
         catch
         {
@@ -81,7 +108,48 @@ public sealed class Mirror : IDisposable
     /// <summary>the mirrored (non-system, non-linked) table names</summary>
     public IReadOnlyCollection<string> TableNames => _tableNames.Keys;
 
+    /// <summary>
+    /// Non-fatal diagnostics collected while reconstructing saved Access queries.
+    /// A query that cannot be translated is not silently indistinguishable from
+    /// a query that does not exist.
+    /// </summary>
+    public IReadOnlyList<string> Diagnostics => _diagnostics;
+
     public bool ContainsTable(string name) => _tableNames.ContainsKey(name);
+
+    internal bool HasActiveReaders
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _commands.Count != 0;
+            }
+        }
+    }
+
+    internal void ThrowIfActiveReaders()
+    {
+        lock (_sync)
+        {
+            if (_commands.Count != 0)
+            {
+                throw new InvalidOperationException(
+                    "Cannot modify the Access database while a data reader is active on the connection.");
+            }
+        }
+    }
+
+    internal bool TryGetRowLocation(string tableName, long sqliteRowId, out Table.RowLocation location)
+    {
+        if (_rowLocators.TryGetValue(tableName, out Dictionary<long, Table.RowLocation>? rows)
+            && rows.TryGetValue(sqliteRowId, out location))
+        {
+            return true;
+        }
+        location = default;
+        return false;
+    }
 
     /// <summary>whether a column reference is a MONEY column (for '&amp;' concatenation scale)</summary>
     public bool IsMoneyColumn(string name)
@@ -113,12 +181,22 @@ public sealed class Mirror : IDisposable
             && kv.Value is DataType.Money or DataType.Numeric);
     }
 
+    internal bool IsDateColumn(string name)
+    {
+        string normalized = name.Trim().Trim('"', '[', ']');
+        if (normalized.Contains('.', StringComparison.Ordinal))
+        {
+            return _qualifiedDateColumns.Contains(normalized);
+        }
+        return _dateColumns.Contains(normalized) && !_nonDateColumns.Contains(normalized);
+    }
+
     /// <summary>whether system (MSys*) tables are exposed in the mirror</summary>
     private bool AllowSystem(TableMetaData meta) => _includeSystem;
 
     public SqliteCommand CreateCommand() => _connection.CreateCommand();
 
-    private void BuildSchemaAndLoad()
+    private void BuildSchemaAndLoad(bool buildSavedQueries)
     {
         foreach (TableMetaData meta in _accessDb.GetTableMetaData())
         {
@@ -145,7 +223,18 @@ public sealed class Mirror : IDisposable
             }
         }
 
-        BuildSavedQueries();
+        if (buildSavedQueries)
+        {
+            BuildSavedQueries();
+        }
+    }
+
+    internal void BuildSavedQueryViews()
+    {
+        lock (_sync)
+        {
+            BuildSavedQueries();
+        }
     }
 
     private void BuildSavedQueries()
@@ -167,7 +256,7 @@ public sealed class Mirror : IDisposable
                 if (CrosstabTranslator.TryBuildDynamicValueQuery(querySql, out string valueQuery))
                 {
                     string translatedValues = AccessSqlTranslator.Translate(valueQuery,
-                        out int valueParameterCount, out _, IsMoneyColumn, IsExactDecimalColumn);
+                        out int valueParameterCount, out _, IsMoneyColumn, IsExactDecimalColumn, IsDateColumn);
                     if (valueParameterCount != 0)
                     {
                         throw new NotSupportedException(
@@ -189,7 +278,7 @@ public sealed class Mirror : IDisposable
                     querySql = CrosstabTranslator.AddPivotValues(querySql, values);
                 }
                 string translated = AccessSqlTranslator.Translate(querySql, out _, out _, IsMoneyColumn,
-                    IsExactDecimalColumn);
+                    IsExactDecimalColumn, IsDateColumn);
                 using var cmd = _connection.CreateCommand();
                 cmd.CommandText = $"CREATE VIEW {SqlNames.Quote(query.Name)} AS {translated}";
                 cmd.ExecuteNonQuery();
@@ -197,19 +286,24 @@ public sealed class Mirror : IDisposable
             }
             catch (Exception)
             {
-                // Keep tables and other saved queries usable when this query uses
-                // Access syntax that cannot be reconstructed by the provider.
+                _diagnostics.Add($"Saved query '{query.Name}' could not be materialized in the SQLite mirror.");
             }
         }
     }
 
     /// <summary>mirrors one Access table (regular or linked) into SQLite under the given name</summary>
-    private void LoadTableIntoMirror(string accessName, Table table)
+    private void LoadTableIntoMirror(string accessName, Table table, SqliteTransaction? transaction = null)
     {
         string sqlName = SqlNames.Quote(accessName);
-        CreateTable(sqlName, table);
-        LoadData(sqlName, table);
+        CreateTable(sqlName, table, transaction);
+        LoadData(sqlName, table, accessName, transaction);
         _tableNames[accessName] = sqlName;
+        RegisterTableMetadata(accessName, table);
+        _loadedTables.Add(accessName);
+    }
+
+    private void RegisterTableMetadata(string accessName, Table table)
+    {
         foreach (Column col in table.Columns)
         {
             string qualified = $"{accessName}.{col.Name}";
@@ -231,9 +325,17 @@ public sealed class Mirror : IDisposable
             {
                 _nonMoneyColumns.Add(col.Name);
             }
+            if (col.Type is DataType.ShortDateTime or DataType.ExtDateTime)
+            {
+                _dateColumns.Add(col.Name);
+                _qualifiedDateColumns.Add(qualified);
+            }
+            else
+            {
+                _nonDateColumns.Add(col.Name);
+            }
             _columnTypes[qualified] = col.Type;
         }
-        _loadedTables.Add(sqlName);
     }
 
     private const string CaseInsensitiveCollation = "UCA_IGNORE_CASE";
@@ -273,7 +375,7 @@ public sealed class Mirror : IDisposable
         return table.Columns.OrderBy(c => c.DisplayIndex).Select(c => (c, c.ColumnIndex)).ToArray();
     }
 
-    private void CreateTable(string sqlName, Table table)
+    private void CreateTable(string sqlName, Table table, SqliteTransaction? transaction = null)
     {
         var cols = new List<string>();
         foreach ((Column col, _) in OrderedColumns(table))
@@ -282,21 +384,26 @@ public sealed class Mirror : IDisposable
         }
 
         using var cmd = _connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = $"CREATE TABLE {sqlName} ({string.Join(", ", cols)})";
         cmd.ExecuteNonQuery();
     }
 
-    private void LoadData(string sqlName, Table table)
+    private void LoadData(string sqlName, Table table, string? locatorName = null,
+        SqliteTransaction? transaction = null)
     {
+        locatorName ??= sqlName.Trim('"');
+        var locators = new Dictionary<long, Table.RowLocation>();
         (Column Column, int FileIndex)[] ordered = OrderedColumns(table);
         var insertColumns = string.Join(", ", ordered.Select(o => SqlNames.Quote(o.Column.Name)));
         var placeholders = string.Join(", ", ordered.Select((_, i) => $"$p{i}"));
 
-        using var tx = _connection.BeginTransaction();
+        using SqliteTransaction? ownedTransaction = transaction == null ? _connection.BeginTransaction() : null;
+        SqliteTransaction activeTransaction = transaction ?? ownedTransaction!;
 
         using (var cmd = _connection.CreateCommand())
         {
-            cmd.Transaction = tx;
+            cmd.Transaction = activeTransaction;
             cmd.CommandText = $"INSERT INTO {sqlName} ({insertColumns}) VALUES ({placeholders})";
 
             var parameters = ordered.Select((_, i) =>
@@ -307,57 +414,30 @@ public sealed class Mirror : IDisposable
                 return p;
             }).ToArray();
 
-            foreach (Row row in table.Rows())
+            foreach (Table.RowLocation location in table.RowLocations())
             {
                 for (int i = 0; i < ordered.Length; i++)
                 {
-                    parameters[i].Value = ToSqliteValue(row[ordered[i].FileIndex], ordered[i].Column);
+                    parameters[i].Value = ToSqliteValue(location.Row[ordered[i].FileIndex], ordered[i].Column);
                 }
                 cmd.ExecuteNonQuery();
+                using var idCommand = _connection.CreateCommand();
+                idCommand.Transaction = activeTransaction;
+                idCommand.CommandText = "SELECT last_insert_rowid()";
+                long sqliteRowId = Convert.ToInt64(idCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+                locators[sqliteRowId] = location;
             }
         }
 
-        tx.Commit();
+        ownedTransaction?.Commit();
+        _rowLocators[locatorName] = locators;
     }
 
     private static object? ToSqliteValue(object? value, Column? column = null)
-        => value switch
-    {
-        null => DBNull.Value,
-        AccessSingleValue[] or AccessAttachment[] or AccessVersion[] when column?.Type == DataType.ComplexType
-            => ComplexValueJson.Serialize(value),
-        decimal m when column?.Type == DataType.Money => ExactDecimal.FromDecimal(m).ToFixedString(4),
-        decimal m when column?.Type == DataType.Numeric => ExactDecimal.FromDecimal(m).ToFixedString(column!.Scale),
-        decimal m => ExactDecimal.FromDecimal(m).ToString(),
-        ExactDecimal exact when column?.Type == DataType.Money => exact.ToFixedString(4),
-        ExactDecimal exact when column?.Type == DataType.Numeric => exact.ToFixedString(column!.Scale),
-        ExactDecimal exact => exact.ToString(),
-        bool b => b ? 1L : 0L,
-        byte n => (long)n,
-        sbyte n => (long)n,
-        short n => (long)n,
-        ushort n => (long)n,
-        int n => (long)n,
-        uint n => (long)n,
-        long n => n,
-        ulong n when n <= long.MaxValue => (long)n,
-        float f => f.ToString("R", CultureInfo.InvariantCulture),
-        double d => d.ToString("R", CultureInfo.InvariantCulture),
-        DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
-        string s when column?.Type == DataType.Money && ExactDecimal.TryParse(s, out ExactDecimal money)
-            => money.ToFixedString(4),
-        string s when column?.Type == DataType.Numeric && ExactDecimal.TryParse(s, out ExactDecimal numeric)
-            => numeric.ToFixedString(column!.Scale),
-        string s => s,
-        byte[] bytes => bytes,
-        _ => value.ToString(),
-    };
+        => AccessValueCodec.ToSqlite(value, column);
 
     internal static object? ToSqliteParameterValue(object? value)
-        => value is decimal m ? ExactDecimal.FromDecimal(m).ToString()
-            : value is float f ? f.ToString("R", CultureInfo.InvariantCulture)
-            : value is double d ? d.ToString("R", CultureInfo.InvariantCulture)
-            : value;
+        => AccessValueCodec.ToSqliteParameter(value);
 
     /// <summary>
     /// Executes the given (already translated) SQL and returns a reader.
@@ -408,6 +488,17 @@ public sealed class Mirror : IDisposable
                 _commands.Remove(cmd);
                 cmd.Dispose();
                 throw;
+            }
+        }
+    }
+
+    internal void CancelActiveCommands()
+    {
+        lock (_sync)
+        {
+            foreach (SqliteCommand command in _commands.ToArray())
+            {
+                command.Cancel();
             }
         }
     }
@@ -536,6 +627,46 @@ public sealed class Mirror : IDisposable
             _commands.Clear();
             _domainConnection.Dispose();
             _connection.Dispose();
+            if (_deleteStorageOnDispose && _storagePath != null)
+            {
+                try
+                {
+                    System.IO.File.Delete(_storagePath);
+                }
+                catch
+                {
+                    // A stale mirror file is harmless and can be cleaned by the owner.
+                }
+            }
+        }
+    }
+
+    private void ClearFileStorage()
+    {
+        var objects = new List<(string Name, string Type)>();
+        using (var list = _connection.CreateCommand())
+        {
+            list.CommandText = "SELECT name, type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'";
+            using var reader = list.ExecuteReader();
+            while (reader.Read())
+            {
+                objects.Add((reader.GetString(0), reader.GetString(1)));
+            }
+        }
+
+        foreach ((string name, string type) in objects.Where(item =>
+                     item.Type.Equals("view", StringComparison.OrdinalIgnoreCase)))
+        {
+            using var drop = _connection.CreateCommand();
+            drop.CommandText = $"DROP VIEW IF EXISTS {SqlNames.Quote(name)}";
+            drop.ExecuteNonQuery();
+        }
+        foreach ((string name, string type) in objects.Where(item =>
+                     !item.Type.Equals("view", StringComparison.OrdinalIgnoreCase)))
+        {
+            using var drop = _connection.CreateCommand();
+            drop.CommandText = $"DROP TABLE IF EXISTS {SqlNames.Quote(name)}";
+            drop.ExecuteNonQuery();
         }
     }
 
@@ -553,56 +684,344 @@ public sealed class Mirror : IDisposable
 
     private void RefreshAllCore()
     {
-        foreach (string viewName in _viewNames.ToArray())
+        if (_commands.Count != 0)
         {
-            using var dropView = _connection.CreateCommand();
-            dropView.CommandText = $"DROP VIEW IF EXISTS {SqlNames.Quote(viewName)}";
-            dropView.ExecuteNonQuery();
+            throw new InvalidOperationException(
+                "Cannot refresh the mirror while a data reader is active on the connection.");
         }
-        _viewNames.Clear();
-
-        var names = _tableNames.Keys.ToList();
-        foreach (string accessName in names)
+        MirrorStateSnapshot previous = CaptureState();
+        using SqliteTransaction transaction = _connection.BeginTransaction();
+        try
         {
-            if (_tableNames.TryGetValue(accessName, out string? sqlName))
+            foreach (string viewName in _viewNames.ToArray())
             {
-                using var drop = _connection.CreateCommand();
-                drop.CommandText = $"DROP TABLE {sqlName}";
-                drop.ExecuteNonQuery();
+                using var dropView = _connection.CreateCommand();
+                dropView.Transaction = transaction;
+                dropView.CommandText = $"DROP VIEW IF EXISTS {SqlNames.Quote(viewName)}";
+                dropView.ExecuteNonQuery();
+            }
+            _viewNames.Clear();
+
+            var names = _tableNames.Keys.ToList();
+            foreach (string accessName in names)
+            {
+                if (_tableNames.TryGetValue(accessName, out string? sqlName))
+                {
+                    using var drop = _connection.CreateCommand();
+                    drop.Transaction = transaction;
+                    drop.CommandText = $"DROP TABLE {sqlName}";
+                    drop.ExecuteNonQuery();
+                }
+            }
+            _tableNames.Clear();
+            _loadedTables.Clear();
+            _diagnostics.Clear();
+            _rowLocators.Clear();
+            ClearMetadata();
+
+            foreach (TableMetaData meta in _accessDb.GetTableMetaData())
+            {
+                if (!AllowSystem(meta) && meta.IsSystem)
+                {
+                    continue;
+                }
+                Table? table = meta.IsLinked ? _accessDb.GetLinkedTable(meta.Name) : _accessDb.GetTable(meta.Name);
+                if (table == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Access table '{meta.Name}' disappeared while the mirror was being refreshed.");
+                }
+                try
+                {
+                    LoadTableIntoMirror(meta.Name, table, transaction);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Could not refresh Access table '{meta.Name}'.", ex);
+                }
+            }
+            transaction.Commit();
+        }
+        catch
+        {
+            previous.Restore(this);
+            throw;
+        }
+
+        _diagnostics.Clear();
+        BuildSavedQueries();
+    }
+
+    /// <summary>
+    /// Reloads only the named tables. New data is loaded into temporary SQLite
+    /// tables first and swapped into the mirror in one transaction, so a load
+    /// failure leaves the previous table contents available.
+    /// </summary>
+    public void RefreshTables(IEnumerable<string> accessTableNames)
+    {
+        ArgumentNullException.ThrowIfNull(accessTableNames);
+        string[] names = accessTableNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (names.Length == 0)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(Mirror));
+            }
+            if (_commands.Count != 0)
+            {
+                throw new InvalidOperationException(
+                    "Cannot refresh the mirror while a data reader is active on the connection.");
+            }
+
+            var temporaryTables = new List<(string AccessName, string TemporaryName, Table Table)>();
+            var previousLocators = names
+                .Where(name => _rowLocators.ContainsKey(name))
+                .ToDictionary(name => name,
+                    name => new Dictionary<long, Table.RowLocation>(_rowLocators[name]),
+                    StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (string accessName in names)
+                {
+                    TableMetaData? meta = _accessDb.GetTableMetaData()
+                        .FirstOrDefault(item => item.Name.Equals(accessName, StringComparison.OrdinalIgnoreCase));
+                    if (meta == null)
+                    {
+                        throw new InvalidOperationException($"Access table '{accessName}' does not exist.");
+                    }
+                    Table? table = meta.IsLinked ? _accessDb.GetLinkedTable(meta.Name) : _accessDb.GetTable(meta.Name);
+                    if (table == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Access table '{meta.Name}' disappeared while the mirror was being refreshed.");
+                    }
+
+                    string temporaryName = "__uca_refresh_" + Guid.NewGuid().ToString("N");
+                    temporaryTables.Add((meta.Name, temporaryName, table));
+                    CreateTable(SqlNames.Quote(temporaryName), table);
+                    LoadData(SqlNames.Quote(temporaryName), table, meta.Name);
+                }
+
+                using var tx = _connection.BeginTransaction();
+                foreach ((string accessName, string temporaryName, _) in temporaryTables)
+                {
+                    string sqlName = SqlNames.Quote(accessName);
+                    using var drop = _connection.CreateCommand();
+                    drop.Transaction = tx;
+                    drop.CommandText = $"DROP TABLE IF EXISTS {sqlName}";
+                    drop.ExecuteNonQuery();
+
+                    using var rename = _connection.CreateCommand();
+                    rename.Transaction = tx;
+                    rename.CommandText = $"ALTER TABLE {SqlNames.Quote(temporaryName)} RENAME TO {sqlName}";
+                    rename.ExecuteNonQuery();
+                }
+                tx.Commit();
+
+                foreach ((string accessName, string _, Table table) in temporaryTables)
+                {
+                    _tableNames[accessName] = SqlNames.Quote(accessName);
+                    if (!_loadedTables.Contains(accessName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        _loadedTables.Add(accessName);
+                    }
+                }
+                RebuildColumnClassifications();
+            }
+            catch
+            {
+                foreach (string name in names)
+                {
+                    _rowLocators.Remove(name);
+                }
+                foreach ((string name, Dictionary<long, Table.RowLocation> locators) in previousLocators)
+                {
+                    _rowLocators[name] = locators;
+                }
+                foreach ((_, string temporaryName, _) in temporaryTables)
+                {
+                    try
+                    {
+                        using var drop = _connection.CreateCommand();
+                        drop.CommandText = $"DROP TABLE IF EXISTS {SqlNames.Quote(temporaryName)}";
+                        drop.ExecuteNonQuery();
+                    }
+                    catch
+                    {
+                        // Preserve the original refresh exception.
+                    }
+                }
+                throw;
+            }
+            try
+            {
+                RebuildSavedQueries();
+            }
+            catch (Exception ex)
+            {
+                _diagnostics.Add($"Saved queries could not be rebuilt after a table refresh: {ex.Message}");
             }
         }
-        _tableNames.Clear();
-        _loadedTables.Clear();
+    }
+
+    private void RebuildSavedQueries()
+    {
+        foreach (string viewName in _viewNames.ToArray())
+        {
+            using var drop = _connection.CreateCommand();
+            drop.CommandText = $"DROP VIEW IF EXISTS {SqlNames.Quote(viewName)}";
+            drop.ExecuteNonQuery();
+        }
+        _viewNames.Clear();
+        _diagnostics.Clear();
+        BuildSavedQueries();
+    }
+
+    private void RebuildColumnClassifications()
+    {
         _booleanColumns.Clear();
         _nonBooleanColumns.Clear();
         _qualifiedBooleanColumns.Clear();
         _moneyColumns.Clear();
         _nonMoneyColumns.Clear();
         _qualifiedMoneyColumns.Clear();
-        _columnTypes.Clear();
-
-        foreach (TableMetaData meta in _accessDb.GetTableMetaData())
+        _dateColumns.Clear();
+        _nonDateColumns.Clear();
+        _qualifiedDateColumns.Clear();
+        foreach ((string qualified, DataType type) in _columnTypes)
         {
-            if (!AllowSystem(meta) && meta.IsSystem)
+            int separator = qualified.IndexOf('.', StringComparison.Ordinal);
+            if (separator <= 0 || separator + 1 >= qualified.Length)
             {
                 continue;
             }
-            Table? table = meta.IsLinked ? _accessDb.GetLinkedTable(meta.Name) : _accessDb.GetTable(meta.Name);
-            if (table == null)
+            string columnName = qualified[(separator + 1)..];
+            if (type == DataType.Boolean)
             {
-                throw new InvalidOperationException(
-                    $"Access table '{meta.Name}' disappeared while the mirror was being refreshed.");
+                _booleanColumns.Add(columnName);
+                _qualifiedBooleanColumns.Add(qualified);
             }
-            try
+            else
             {
-                LoadTableIntoMirror(meta.Name, table);
+                _nonBooleanColumns.Add(columnName);
             }
-            catch (Exception ex)
+            if (type == DataType.Money)
             {
-                throw new InvalidOperationException($"Could not refresh Access table '{meta.Name}'.", ex);
+                _moneyColumns.Add(columnName);
+                _qualifiedMoneyColumns.Add(qualified);
+            }
+            else
+            {
+                _nonMoneyColumns.Add(columnName);
+            }
+            if (type is DataType.ShortDateTime or DataType.ExtDateTime)
+            {
+                _dateColumns.Add(columnName);
+                _qualifiedDateColumns.Add(qualified);
+            }
+            else
+            {
+                _nonDateColumns.Add(columnName);
             }
         }
+    }
 
-        BuildSavedQueries();
+    private void ClearMetadata()
+    {
+        _booleanColumns.Clear();
+        _nonBooleanColumns.Clear();
+        _qualifiedBooleanColumns.Clear();
+        _moneyColumns.Clear();
+        _nonMoneyColumns.Clear();
+        _qualifiedMoneyColumns.Clear();
+        _dateColumns.Clear();
+        _nonDateColumns.Clear();
+        _qualifiedDateColumns.Clear();
+        _columnTypes.Clear();
+    }
+
+    private MirrorStateSnapshot CaptureState()
+        => new()
+        {
+            TableNames = new Dictionary<string, string>(_tableNames, StringComparer.OrdinalIgnoreCase),
+            LoadedTables = _loadedTables.ToList(),
+            ViewNames = _viewNames.ToList(),
+            Diagnostics = _diagnostics.ToList(),
+            RowLocators = _rowLocators.ToDictionary(
+                pair => pair.Key,
+                pair => new Dictionary<long, Table.RowLocation>(pair.Value),
+                StringComparer.OrdinalIgnoreCase),
+            ColumnTypes = new Dictionary<string, DataType>(_columnTypes, StringComparer.OrdinalIgnoreCase),
+            BooleanColumns = new HashSet<string>(_booleanColumns, StringComparer.OrdinalIgnoreCase),
+            NonBooleanColumns = new HashSet<string>(_nonBooleanColumns, StringComparer.OrdinalIgnoreCase),
+            QualifiedBooleanColumns = new HashSet<string>(_qualifiedBooleanColumns, StringComparer.OrdinalIgnoreCase),
+            MoneyColumns = new HashSet<string>(_moneyColumns, StringComparer.OrdinalIgnoreCase),
+            NonMoneyColumns = new HashSet<string>(_nonMoneyColumns, StringComparer.OrdinalIgnoreCase),
+            QualifiedMoneyColumns = new HashSet<string>(_qualifiedMoneyColumns, StringComparer.OrdinalIgnoreCase),
+            DateColumns = new HashSet<string>(_dateColumns, StringComparer.OrdinalIgnoreCase),
+            NonDateColumns = new HashSet<string>(_nonDateColumns, StringComparer.OrdinalIgnoreCase),
+            QualifiedDateColumns = new HashSet<string>(_qualifiedDateColumns, StringComparer.OrdinalIgnoreCase),
+        };
+
+    private sealed class MirrorStateSnapshot
+    {
+        public Dictionary<string, string> TableNames { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> LoadedTables { get; init; } = new();
+        public List<string> ViewNames { get; init; } = new();
+        public List<string> Diagnostics { get; init; } = new();
+        public Dictionary<string, Dictionary<long, Table.RowLocation>> RowLocators { get; init; }
+            = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, DataType> ColumnTypes { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> BooleanColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> NonBooleanColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> QualifiedBooleanColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> MoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> NonMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> QualifiedMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> DateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> NonDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> QualifiedDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Restore(Mirror mirror)
+        {
+            mirror._tableNames.Clear();
+            foreach ((string name, string sqlName) in TableNames) mirror._tableNames[name] = sqlName;
+            mirror._loadedTables.Clear();
+            mirror._loadedTables.AddRange(LoadedTables);
+            mirror._viewNames.Clear();
+            mirror._viewNames.AddRange(ViewNames);
+            mirror._diagnostics.Clear();
+            mirror._diagnostics.AddRange(Diagnostics);
+            mirror._rowLocators.Clear();
+            foreach ((string name, Dictionary<long, Table.RowLocation> rows) in RowLocators)
+            {
+                mirror._rowLocators[name] = new Dictionary<long, Table.RowLocation>(rows);
+            }
+            mirror._columnTypes.Clear();
+            foreach ((string name, DataType type) in ColumnTypes) mirror._columnTypes[name] = type;
+            RestoreSet(mirror._booleanColumns, BooleanColumns);
+            RestoreSet(mirror._nonBooleanColumns, NonBooleanColumns);
+            RestoreSet(mirror._qualifiedBooleanColumns, QualifiedBooleanColumns);
+            RestoreSet(mirror._moneyColumns, MoneyColumns);
+            RestoreSet(mirror._nonMoneyColumns, NonMoneyColumns);
+            RestoreSet(mirror._qualifiedMoneyColumns, QualifiedMoneyColumns);
+            RestoreSet(mirror._dateColumns, DateColumns);
+            RestoreSet(mirror._nonDateColumns, NonDateColumns);
+            RestoreSet(mirror._qualifiedDateColumns, QualifiedDateColumns);
+        }
+
+        private static void RestoreSet(HashSet<string> target, IEnumerable<string> values)
+        {
+            target.Clear();
+            target.UnionWith(values);
+        }
     }
 }
