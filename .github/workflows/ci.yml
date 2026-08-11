@@ -18,7 +18,7 @@ env:
 
 jobs:
   build-test:
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -31,17 +31,26 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - uses: actions/setup-java@v5
+        with:
+          # Temurin is only the CI default. The oracle scripts accept any
+          # compatible JDK distribution; Oracle-vendor Java is not required.
+          distribution: temurin
+          java-version: 21
+
       - name: Restore
         run: dotnet restore UCanAccess.slnx
 
       - name: Build
         run: dotnet build UCanAccess.slnx -c Release --no-restore
 
+      - name: Prepare Java oracle toolchain
+        run: pwsh tools/JavaOracle/prepare.ps1
+
       - name: Test file format library
         run: dotnet test tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
       - name: Test ADO.NET provider
-        if: matrix.os == 'windows-latest'
         run: dotnet test tests/UCanAccess.Tests/UCanAccess.Tests.csproj -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
       - name: Upload coverage
