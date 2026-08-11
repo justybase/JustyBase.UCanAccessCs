@@ -22,7 +22,6 @@ public sealed class Mirror : IDisposable
 {
     private readonly File.Database _accessDb;
     private readonly SqliteConnection _connection;
-    private readonly SqliteConnection _domainConnection;
     private readonly bool _includeSystem;
     private readonly bool _displayOrder;
     private readonly string? _storagePath;
@@ -58,12 +57,11 @@ public sealed class Mirror : IDisposable
         _displayOrder = displayOrder;
         _storagePath = storagePath;
         _deleteStorageOnDispose = deleteStorageOnDispose;
-        // A named shared-cache in-memory database lets the Access domain functions
-        // (DCount/DLookup/...) run their own subqueries on a second connection
-        // while the outer query's reader is still active on the main connection.
-        string dbId = storagePath == null
-            ? $"file:ucanaccess_{Guid.NewGuid():N}?mode=memory&cache=shared"
-            : storagePath;
+        // The Access domain functions (DCount/DLookup/...) run their own
+        // subqueries while the outer query's reader is still active. SQLite
+        // supports concurrent read statements on one connection, so a single
+        // connection is sufficient (a second shared-cache connection would
+        // deadlock in sqlite3_prepare_v2 on Linux).
         if (storagePath != null)
         {
             string? directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(storagePath));
@@ -73,12 +71,11 @@ public sealed class Mirror : IDisposable
             }
         }
         string sqliteConnectionString = storagePath == null
-            ? $"Data Source={dbId}"
-            : $"Data Source={dbId};Cache=Shared;Pooling=False";
+            ? "Data Source=:memory:"
+            // Pooling would keep a stale handle on the mirror file open after dispose.
+            : $"Data Source={storagePath};Pooling=False";
         _connection = new SqliteConnection(sqliteConnectionString);
-        _domainConnection = new SqliteConnection(sqliteConnectionString);
         _connection.Open();
-        _domainConnection.Open();
         if (storagePath != null)
         {
             ClearFileStorage();
@@ -101,9 +98,6 @@ public sealed class Mirror : IDisposable
     }
 
     public SqliteConnection Connection => _connection;
-
-    /// <summary>a separate connection to the same in-memory database (for domain functions)</summary>
-    internal SqliteConnection DomainConnection => _domainConnection;
 
     /// <summary>the mirrored (non-system, non-linked) table names</summary>
     public IReadOnlyCollection<string> TableNames => _tableNames.Keys;
@@ -625,7 +619,6 @@ public sealed class Mirror : IDisposable
                 cmd.Dispose();
             }
             _commands.Clear();
-            _domainConnection.Dispose();
             _connection.Dispose();
             if (_deleteStorageOnDispose && _storagePath != null)
             {

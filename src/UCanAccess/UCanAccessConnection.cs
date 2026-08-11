@@ -121,13 +121,11 @@ public sealed class UCanAccessConnection : DbConnection
         var mirror = new Mirror(database, _connStr?.ShowSchema ?? false, displayOrder,
             buildSavedQueries: false, storagePath: mirrorPath,
             deleteStorageOnDispose: mirrorPath != null && _connStr?.MirrorPath == null);
-        AccessFunctions.Register(mirror.Connection, mirror.DomainConnection,
+        AccessFunctions.Register(mirror.Connection,
             mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
         foreach (RegisteredFunction registration in _customFunctions)
         {
             AccessFunctions.RegisterFunction(mirror.Connection, registration.Name, registration.Arity,
-                registration.Function, registration.Deterministic);
-            AccessFunctions.RegisterFunction(mirror.DomainConnection, registration.Name, registration.Arity,
                 registration.Function, registration.Deterministic);
         }
         mirror.BuildSavedQueryViews();
