@@ -21,38 +21,28 @@ public static class AccessFunctions
     public static void ResetClock() => _clock = () => DateTime.Now;
 
     /// <summary>registers the Access functions on the given SQLite connection</summary>
-    public static void Register(SqliteConnection connection, SqliteConnection domainConnection,
+    public static void Register(SqliteConnection connection,
         Func<string, bool>? isMoneyColumn = null,
         Func<string, bool>? isExactDecimalColumn = null,
         Func<string, bool>? isDateColumn = null)
-        => RegisterCore(connection, domainConnection, registerDomainRuntime: true,
-            isMoneyColumn, isExactDecimalColumn, isDateColumn);
+        => RegisterCore(connection, isMoneyColumn, isExactDecimalColumn, isDateColumn);
 
-    private static void RegisterCore(SqliteConnection connection, SqliteConnection domainConnection,
-        bool registerDomainRuntime,
+    private static void RegisterCore(SqliteConnection connection,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
         Func<string, bool>? isDateColumn)
     {
         // Access MONEY/NUMERIC values are mirrored as invariant decimal text.
-        // Register the exact operators on both the query and domain-function
-        // connections because DSum/DLookup execute subqueries on the latter.
+        // Register the exact operators on the query connection; the domain
+        // functions (DSum/DLookup/...) run their subqueries on the same
+        // connection (SQLite allows concurrent read statements on one handle).
         ExactDecimalSql.Register(connection);
-        if (!ReferenceEquals(connection, domainConnection))
-        {
-            ExactDecimalSql.Register(domainConnection);
-        }
 
         // SQLite stores mirrored Access dates as canonical ISO text. These
         // helpers preserve Access' serial-date arithmetic instead of letting
         // SQLite coerce a date string to a number.
         RegisterVar(connection, "uca_date_add_days", a => DateArithmetic(a, add: true), true);
         RegisterVar(connection, "uca_date_diff_days", a => DateArithmetic(a, add: false), true);
-        if (!ReferenceEquals(connection, domainConnection))
-        {
-            RegisterVar(domainConnection, "uca_date_add_days", a => DateArithmetic(a, add: true), true);
-            RegisterVar(domainConnection, "uca_date_diff_days", a => DateArithmetic(a, add: false), true);
-        }
 
         // access_like is a pure regex match, so it is deterministic; this also lets
         // SQLite use it in ORDER BY / aggregate contexts.
@@ -170,31 +160,31 @@ public static class AccessFunctions
             a.Length > 3 ? ToDouble(a[3]) : 0, a.Length > 4 ? ToDouble(a[4]) : 0,
             a.Length > 5 ? ToDouble(a[5]) : 0.1));
 
-        // domain aggregate functions: they run their own subquery on a second
-        // connection to the same in-memory mirror (see Mirror.DomainConnection)
-        RegisterVar(connection, "dcount", a => DomainAggregate(domainConnection, a, "Count",
+        // domain aggregate functions: they run their own subquery on the same
+        // connection while the outer query's reader is active
+        RegisterVar(connection, "dcount", a => DomainAggregate(connection, a, "Count",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dsum", a => DomainAggregate(domainConnection, a, "Sum",
+        RegisterVar(connection, "dsum", a => DomainAggregate(connection, a, "Sum",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "davg", a => DomainAggregate(domainConnection, a, "Avg",
+        RegisterVar(connection, "davg", a => DomainAggregate(connection, a, "Avg",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dmin", a => DomainAggregate(domainConnection, a, "Min",
+        RegisterVar(connection, "dmin", a => DomainAggregate(connection, a, "Min",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dmax", a => DomainAggregate(domainConnection, a, "Max",
+        RegisterVar(connection, "dmax", a => DomainAggregate(connection, a, "Max",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dfirst", a => DomainRow(domainConnection, a, first: true,
+        RegisterVar(connection, "dfirst", a => DomainRow(connection, a, first: true,
             isMoneyColumn: isMoneyColumn, isExactDecimalColumn: isExactDecimalColumn, isDateColumn: isDateColumn));
-        RegisterVar(connection, "dlast", a => DomainRow(domainConnection, a, last: true,
+        RegisterVar(connection, "dlast", a => DomainRow(connection, a, last: true,
             isMoneyColumn: isMoneyColumn, isExactDecimalColumn: isExactDecimalColumn, isDateColumn: isDateColumn));
-        RegisterVar(connection, "dlookup", a => DomainLookup(domainConnection, a,
+        RegisterVar(connection, "dlookup", a => DomainLookup(connection, a,
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dstdev", a => DomainAggregate(domainConnection, a, "StDev",
+        RegisterVar(connection, "dstdev", a => DomainAggregate(connection, a, "StDev",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dstdevp", a => DomainAggregate(domainConnection, a, "StDevP",
+        RegisterVar(connection, "dstdevp", a => DomainAggregate(connection, a, "StDevP",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dvar", a => DomainAggregate(domainConnection, a, "Var",
+        RegisterVar(connection, "dvar", a => DomainAggregate(connection, a, "Var",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
-        RegisterVar(connection, "dvarp", a => DomainAggregate(domainConnection, a, "VarP",
+        RegisterVar(connection, "dvarp", a => DomainAggregate(connection, a, "VarP",
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
 
         // misc
@@ -204,7 +194,7 @@ public static class AccessFunctions
         RegisterVar(connection, "npv", a => Npv(a));
         RegisterVar(connection, "mirr", a => Mirr(a));
         RegisterVar(connection, "version", _ => typeof(AccessFunctions).Assembly.GetName().Version?.ToString() ?? "1.0");
-        RegisterVar(connection, "eval", a => Eval(domainConnection, a,
+        RegisterVar(connection, "eval", a => Eval(connection, a,
             isMoneyColumn, isExactDecimalColumn, isDateColumn));
         // Access Round(x, n) = floor(x*10^n + 0.5) / 10^n (Java Math.round semantics),
         // which differs from SQLite's builtin for negative half values.
@@ -229,15 +219,6 @@ public static class AccessFunctions
             state => state?.HasValue == true ? state.First : null, true);
         connection.CreateAggregate<FirstLastState, object?>("last", new FirstLastState(), FirstLastStep,
             state => state?.HasValue == true ? state.Last : null, true);
-
-        // Domain criteria are translated into SQL and executed on the second
-        // connection. Register the same scalar/aggregate runtime there so
-        // criteria using Access functions behave like ordinary SELECTs.
-        if (registerDomainRuntime && !ReferenceEquals(connection, domainConnection))
-        {
-            RegisterCore(domainConnection, domainConnection, registerDomainRuntime: false,
-                isMoneyColumn, isExactDecimalColumn, isDateColumn);
-        }
     }
 
     /// <summary>
@@ -357,7 +338,7 @@ public static class AccessFunctions
         return Math.Pow(positiveFutureValue / -negativePresentValue, 1.0 / (count - 1)) - 1;
     }
 
-    private static object? Eval(SqliteConnection domainConnection, object?[] args,
+    private static object? Eval(SqliteConnection connection, object?[] args,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
         Func<string, bool>? isDateColumn)
@@ -371,7 +352,7 @@ public static class AccessFunctions
         {
             throw new InvalidOperationException("EVAL accepts one Access expression, not multiple SQL statements.");
         }
-        using var command = domainConnection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = TranslateDomain("SELECT " + expression,
             isMoneyColumn, isExactDecimalColumn, isDateColumn);
         using var reader = command.ExecuteReader();
@@ -856,7 +837,7 @@ public static class AccessFunctions
         return SqlNames.Quote(name);
     }
 
-    private static object? DomainAggregate(SqliteConnection domainConnection, object?[] a, string aggregate,
+    private static object? DomainAggregate(SqliteConnection connection, object?[] a, string aggregate,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
         Func<string, bool>? isDateColumn)
@@ -870,7 +851,7 @@ public static class AccessFunctions
         string? criteria = a.Length > 2 ? AsString(a[2]) : null;
         string where = string.IsNullOrEmpty(criteria) ? "" : $" WHERE {criteria}";
         string sql = $"SELECT {aggregate}({expr}) FROM {QuoteDomain(domain)}{where}";
-        using var cmd = domainConnection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = TranslateDomain(sql, isMoneyColumn, isExactDecimalColumn, isDateColumn);
         using var reader = cmd.ExecuteReader();
         if (reader.Read() && !reader.IsDBNull(0))
@@ -886,7 +867,7 @@ public static class AccessFunctions
         return aggregate == "Count" ? 0L : null;
     }
 
-    private static object? DomainRow(SqliteConnection domainConnection, object?[] a, bool first = false, bool last = false,
+    private static object? DomainRow(SqliteConnection connection, object?[] a, bool first = false, bool last = false,
         Func<string, bool>? isMoneyColumn = null,
         Func<string, bool>? isExactDecimalColumn = null,
         Func<string, bool>? isDateColumn = null)
@@ -901,13 +882,13 @@ public static class AccessFunctions
         string where = string.IsNullOrEmpty(criteria) ? "" : $" WHERE {criteria}";
         string order = last ? " ORDER BY rowid DESC" : "";
         string sql = $"SELECT {expr} FROM {QuoteDomain(domain)}{where}{order} LIMIT 1";
-        using var cmd = domainConnection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = TranslateDomain(sql, isMoneyColumn, isExactDecimalColumn, isDateColumn);
         using var reader = cmd.ExecuteReader();
         return reader.Read() && !reader.IsDBNull(0) ? reader.GetValue(0) : null;
     }
 
-    private static object? DomainLookup(SqliteConnection domainConnection, object?[] a,
+    private static object? DomainLookup(SqliteConnection connection, object?[] a,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
         Func<string, bool>? isDateColumn)
@@ -921,7 +902,7 @@ public static class AccessFunctions
         string? criteria = a.Length > 2 ? AsString(a[2]) : null;
         string where = string.IsNullOrEmpty(criteria) ? "" : $" WHERE {criteria}";
         string sql = $"SELECT {expr} FROM {QuoteDomain(domain)}{where} LIMIT 2";
-        using var cmd = domainConnection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = TranslateDomain(sql, isMoneyColumn, isExactDecimalColumn, isDateColumn);
         using var reader = cmd.ExecuteReader();
         if (!reader.Read())
