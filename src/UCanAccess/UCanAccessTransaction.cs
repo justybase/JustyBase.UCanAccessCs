@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
+using UCanAccess.File;
 
 namespace UCanAccess;
 
@@ -20,11 +21,14 @@ public sealed class UCanAccessTransaction : DbTransaction
     private string? _stagedPath;
     private Exception? _stageFailure;
     private bool _completed;
+    private readonly long _sourceLength;
+    private readonly long _sourceWriteTicks;
 
     internal UCanAccessTransaction(UCanAccessConnection connection, IsolationLevel isolationLevel)
     {
         _connection = connection;
         _isolationLevel = isolationLevel;
+        (_sourceLength, _sourceWriteTicks) = connection.GetSourceFingerprint();
     }
 
     public override IsolationLevel IsolationLevel => _isolationLevel;
@@ -51,6 +55,8 @@ public sealed class UCanAccessTransaction : DbTransaction
     internal int AddPending(string sql, IReadOnlyList<object?>? parameters)
     {
         Check();
+        _connection.ThrowIfActiveReaders();
+        _stagedMirror?.ThrowIfActiveReaders();
         _pending.Add((sql, parameters));
         if (_stageFailure != null)
         {
@@ -67,7 +73,19 @@ public sealed class UCanAccessTransaction : DbTransaction
             }
             else
             {
-                return AccessDml.Execute(_stagedDatabase!, _stagedMirror!, sql, parameters, false);
+                Table? insertedTable = null;
+                object?[]? insertedValues = null;
+                int affected = AccessDml.Execute(_stagedDatabase!, _stagedMirror!, sql, parameters, false,
+                    onInsertedRow: (table, values) =>
+                    {
+                        insertedTable = table;
+                        insertedValues = values;
+                    });
+                if (insertedTable != null)
+                {
+                    _connection.SetLastInsertedId(insertedTable, insertedValues);
+                }
+                return affected;
             }
         }
         catch (Exception ex)
@@ -84,6 +102,7 @@ public sealed class UCanAccessTransaction : DbTransaction
     {
         Check();
         string? stagedPath = _stagedPath;
+        bool commitSucceeded = false;
         try
         {
             if (_stageFailure != null)
@@ -92,13 +111,19 @@ public sealed class UCanAccessTransaction : DbTransaction
             }
             if (stagedPath != null)
             {
+                _connection.EnsureSourceFingerprint(_sourceLength, _sourceWriteTicks);
                 DisposeStage(keepFile: true);
                 _connection.ReplaceDatabaseFile(stagedPath);
                 stagedPath = null; // File.Replace consumed the staged copy.
             }
+            commitSucceeded = true;
         }
         finally
         {
+            if (!commitSucceeded)
+            {
+                _connection.ClearLastInsertedId();
+            }
             DisposeStage(keepFile: false);
             if (stagedPath != null)
             {
@@ -173,7 +198,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         {
             System.IO.File.Copy(savepoint.Path, stagedPath, true);
             _stagedDatabase = _connection.OpenDatabaseFile(stagedPath, readOnly: false);
-            _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase);
+            _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase, useConfiguredStorage: false);
             _stagedPath = stagedPath;
         }
         catch
@@ -207,6 +232,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         {
             throw new InvalidOperationException("Transactions require a file-backed database so the commit can be prepared atomically.");
         }
+        _connection.EnsureSourceFingerprint(_sourceLength, _sourceWriteTicks);
         if (_connection.AccessDatabase.GetTableMetaData().Any(meta => meta.IsLinked))
         {
             throw new NotSupportedException(
@@ -224,7 +250,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         try
         {
             _stagedDatabase = _connection.OpenDatabaseFile(copyPath, readOnly: false);
-            _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase);
+            _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase, useConfiguredStorage: false);
             _stagedPath = copyPath;
         }
         catch
@@ -282,6 +308,7 @@ public sealed class UCanAccessTransaction : DbTransaction
     public override void Rollback()
     {
         Check();
+        _connection.ClearLastInsertedId();
         _pending.Clear();
         DisposeStage(keepFile: false);
         DeleteSavepoints();
@@ -302,6 +329,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         // an uncommitted transaction is rolled back on dispose
         if (!_completed)
         {
+            _connection.ClearLastInsertedId();
             _pending.Clear();
             DisposeStage(keepFile: false);
             DeleteSavepoints();

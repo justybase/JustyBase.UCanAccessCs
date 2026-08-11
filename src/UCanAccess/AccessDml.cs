@@ -13,12 +13,12 @@ namespace UCanAccess;
 /// Supported grammar (subset):
 ///   INSERT INTO table [(col1, col2, ...)] VALUES (v1, v2, ...) [,(v1, v2, ...)]
 ///   INSERT INTO table VALUES (v1, v2, ...)
-///   UPDATE table SET col = value [, ...] [WHERE condition]
-///   DELETE FROM table [WHERE condition]
+///   UPDATE table [JOIN ...] SET col = expression [, ...] [WHERE condition]
+///   DELETE FROM table [JOIN ...] [WHERE condition]
 ///
-/// WHERE conditions support: comparisons (=, &lt;&gt;, &lt;, &gt;, &lt;=, &gt;=),
-/// IS [NOT] NULL, [NOT] IN (...), [NOT] BETWEEN a AND b, [NOT] LIKE 'pattern'
-/// (with % and _ wildcards), combined with AND / OR / NOT and parentheses.
+/// UPDATE and DELETE selection expressions are translated through the mirror,
+/// so Access functions, joins, correlated subqueries and SQL three-valued NULL
+/// logic are evaluated by the query engine before file rows are mutated.
 /// </summary>
 public static class AccessDml
 {
@@ -33,7 +33,8 @@ public static class AccessDml
     /// Executes the given DML statement against the database.
     /// </summary>
     /// <returns>the number of rows affected</returns>
-    public static int Execute(File.Database db, Mirror mirror, string sql, IReadOnlyList<object?>? parameters, bool dryRun = false)
+    public static int Execute(File.Database db, Mirror mirror, string sql, IReadOnlyList<object?>? parameters,
+        bool dryRun = false, Action<Table, object?[]>? onInsertedRow = null)
     {
         List<Token> tokens = Tokenize(NormalizeParameters(sql));
         while (tokens.Count > 0 && tokens[^1].Text == ";")
@@ -53,17 +54,25 @@ public static class AccessDml
             throw new InvalidOperationException(
                 $"The statement expects {placeholderCount} positional parameter value(s), but {suppliedCount} were supplied.");
         }
+        if (!dryRun)
+        {
+            mirror.ThrowIfActiveReaders();
+        }
         int affected;
         switch (kind)
         {
             case "INSERT":
-                affected = ExecuteInsert(db, mirror, tokens, parameters, dryRun);
+                affected = ExecuteInsert(db, mirror, tokens, parameters, dryRun, onInsertedRow);
                 break;
             case "UPDATE":
-                affected = ExecuteUpdate(db, mirror, tokens, parameters, dryRun);
+                affected = HasTopLevelJoin(tokens)
+                    ? ExecuteUpdateJoin(db, mirror, tokens, parameters, dryRun)
+                    : ExecuteUpdate(db, mirror, tokens, parameters, dryRun);
                 break;
             case "DELETE":
-                affected = ExecuteDelete(db, mirror, tokens, parameters, dryRun);
+                affected = HasTopLevelJoin(tokens)
+                    ? ExecuteDeleteJoin(db, mirror, tokens, parameters, dryRun)
+                    : ExecuteDelete(db, mirror, tokens, parameters, dryRun);
                 break;
             default:
                 throw new NotSupportedException($"Statement type '{kind}' is not supported for writes.");
@@ -72,13 +81,74 @@ public static class AccessDml
         // refresh the mirrored copy so subsequent SELECTs see the changes
         if (!dryRun)
         {
-            mirror.RefreshAll();
+            string? targetTable = GetMutationTarget(tokens, kind);
+            if (targetTable == null)
+            {
+                mirror.RefreshAll();
+            }
+            else
+            {
+                mirror.RefreshTables(GetRefreshTables(db, targetTable, kind));
+            }
         }
 
         return affected;
     }
 
-    private static int ExecuteInsert(File.Database db, Mirror mirror, List<Token> tokens, IReadOnlyList<object?>? parameters, bool dryRun)
+    private static IReadOnlyList<string> GetRefreshTables(File.Database db, string targetTable, string kind)
+    {
+        var result = new List<string> { targetTable };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetTable };
+        var pending = new Queue<string>();
+        pending.Enqueue(targetTable);
+
+        while (pending.Count > 0)
+        {
+            string current = pending.Dequeue();
+            foreach (Relationship relationship in db.GetRelationships(current))
+            {
+                if (!relationship.FromTable.Name.Equals(current, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool cascades = kind.Equals("DELETE", StringComparison.OrdinalIgnoreCase)
+                    ? relationship.CascadeDeletes || relationship.CascadeNullOnDelete
+                    : kind.Equals("UPDATE", StringComparison.OrdinalIgnoreCase)
+                        ? relationship.CascadeUpdates
+                        : false;
+                if (!cascades || !seen.Add(relationship.ToTable.Name))
+                {
+                    continue;
+                }
+
+                result.Add(relationship.ToTable.Name);
+                pending.Enqueue(relationship.ToTable.Name);
+            }
+        }
+
+        return result;
+    }
+
+    private static string? GetMutationTarget(List<Token> tokens, string kind)
+    {
+        int index = kind switch
+        {
+            "INSERT" => 2,
+            "UPDATE" => 1,
+            "DELETE" => 2,
+            _ => -1,
+        };
+        if (index < 0 || index >= tokens.Count)
+        {
+            return null;
+        }
+        Token token = tokens[index];
+        return token.Kind is Kind.Word or Kind.Ident ? token.Text : null;
+    }
+
+    private static int ExecuteInsert(File.Database db, Mirror mirror, List<Token> tokens,
+        IReadOnlyList<object?>? parameters, bool dryRun, Action<Table, object?[]>? onInsertedRow)
     {
         int pos = 0;
         int paramIndex = 0;
@@ -108,7 +178,7 @@ public static class AccessDml
         // INSERT ... SELECT
         if (Peek(tokens, pos) is { } first && first.Text.Equals("select", StringComparison.OrdinalIgnoreCase))
         {
-            return ExecuteInsertSelect(mirror, table, columns, tokens, pos, parameters, dryRun);
+            return ExecuteInsertSelect(mirror, table, columns, tokens, pos, parameters, dryRun, onInsertedRow);
         }
 
         ExpectWord(tokens, ref pos, "values");
@@ -133,7 +203,8 @@ public static class AccessDml
 
             if (!dryRun)
             {
-                table.AddRow(BuildInsertRow(table, columns, valueExprs));
+                object?[] committed = table.AddRow(BuildInsertRow(table, columns, valueExprs));
+                onInsertedRow?.Invoke(table, committed);
             }
             affected++;
 
@@ -150,11 +221,12 @@ public static class AccessDml
         return affected;
     }
 
-    private static int ExecuteInsertSelect(Mirror mirror, Table table, List<string>? columns, List<Token> tokens, int selectStart, IReadOnlyList<object?>? parameters, bool dryRun)
+    private static int ExecuteInsertSelect(Mirror mirror, Table table, List<string>? columns, List<Token> tokens,
+        int selectStart, IReadOnlyList<object?>? parameters, bool dryRun, Action<Table, object?[]>? onInsertedRow)
     {
         string selectSql = RebuildSql(tokens, selectStart);
         string translated = AccessSqlTranslator.Translate(selectSql, out int pcount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
         IReadOnlyList<object?>? selectParams = pcount > 0 ? parameters : null;
         using var reader = mirror.ExecuteReader(translated, selectParams);
         int affected = 0;
@@ -167,91 +239,382 @@ public static class AccessDml
             }
             if (!dryRun)
             {
-                table.AddRow(BuildInsertRow(table, columns, values));
+                object?[] committed = table.AddRow(BuildInsertRow(table, columns, values));
+                onInsertedRow?.Invoke(table, committed);
             }
             affected++;
         }
         return affected;
     }
 
-    private static int ExecuteUpdate(File.Database db, Mirror mirror, List<Token> tokens, IReadOnlyList<object?>? parameters, bool dryRun)
+    private static int ExecuteUpdateJoin(File.Database db, Mirror mirror, List<Token> tokens,
+        IReadOnlyList<object?>? parameters, bool dryRun)
     {
-        int pos = 0;
-        int paramIndex = 0;
-        ExpectWord(tokens, ref pos, "update");
-        Table table = ReadTable(db, tokens, ref pos);
-        ExpectWord(tokens, ref pos, "set");
-
-        // parse SET assignments (right-hand sides are expressions evaluated per row)
-        var assignments = new List<(Column Column, RowExpr Expression)>();
-        while (true)
+        int setIndex = FindTopLevelWord(tokens, "set", 1);
+        if (setIndex < 0)
         {
-            string name = ReadName(tokens, ref pos);
-            Column? column = FindColumn(table, name)
-                ?? throw new InvalidOperationException($"Unknown column '{name}'.");
-            ExpectSymbol(tokens, ref pos, "=");
-            var exprParser = new ExprParser(tokens, pos, table, parameters, paramIndex);
-            RowExpr expression = exprParser.Parse();
-            pos = exprParser.Pos;
-            paramIndex = exprParser.ParamCount;
-            assignments.Add((column, expression));
-            if (Peek(tokens, pos) is { Text: "," })
-            {
-                pos++;
-                continue;
-            }
-            break;
+            throw new NotSupportedException("UPDATE JOIN requires a SET clause.");
+        }
+        int whereIndex = FindTopLevelWord(tokens, "where", setIndex + 1);
+        int end = whereIndex < 0 ? tokens.Count : whereIndex;
+        string targetName = tokens[1].Text;
+        Table table = ResolveTable(db, targetName);
+        string targetReference = GetTargetReference(tokens, 1, setIndex);
+        List<(Column Column, string Expression)> assignments = ParseAssignments(tokens, setIndex + 1, end, table);
+        string fromClause = RebuildSql(tokens, 1, setIndex);
+        string selectSql = $"SELECT DISTINCT {targetReference}.rowid, "
+            + string.Join(", ", assignments.Select(item => item.Expression))
+            + $" FROM {fromClause}"
+            + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
+        string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+        if (parameterCount != (parameters?.Count ?? 0))
+        {
+            throw new InvalidOperationException(
+                $"The UPDATE JOIN expects {parameterCount} positional parameter value(s), but {parameters?.Count ?? 0} were supplied.");
         }
 
-        // optional WHERE
-        WhereClause? where = TryParseWhere(tokens, ref pos, table, parameters, paramIndex, mirror);
-        where?.ValidateSyntax();
-
-        int affected = 0;
-        foreach (Table.RowLocation location in table.RowLocations())
+        var updates = new Dictionary<(int Page, int Row), (Table.RowLocation Location, object?[] Values)>();
+        using (MirrorReader reader = mirror.ExecuteReader(translated, parameters))
         {
-            if (where != null && !where.Matches(location.Row))
+            while (reader.Read())
+            {
+                long sqliteRowId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (!mirror.TryGetRowLocation(targetName, sqliteRowId, out Table.RowLocation location))
+                {
+                    throw new InvalidOperationException(
+                        $"The mirror did not contain a file locator for target table '{targetName}'.");
+                }
+                object?[] values = new object?[assignments.Count];
+                for (int i = 0; i < values.Length; i++)
+                {
+                    values[i] = reader.IsDBNull(i + 1) ? null : reader.GetValue(i + 1);
+                }
+                var key = (location.PageNumber, location.RowNumber);
+                if (updates.TryGetValue(key, out var existing)
+                    && !existing.Values.SequenceEqual(values, AccessObjectComparer.Instance))
+                {
+                    throw new NotSupportedException(
+                        "UPDATE JOIN matched one target row with different source values.");
+                }
+                updates[key] = (location, values);
+            }
+        }
+
+        foreach ((Table.RowLocation location, object?[] values) in updates.Values
+                     .OrderByDescending(item => item.Location.PageNumber)
+                     .ThenByDescending(item => item.Location.RowNumber))
+        {
+            if (dryRun)
             {
                 continue;
             }
-            object?[] values = location.Row.ToArray();
-            foreach ((Column column, RowExpr expression) in assignments)
+            object?[] row = location.Row.ToArray();
+            for (int i = 0; i < assignments.Count; i++)
             {
-                values[column.ColumnIndex] = CoerceValue(column, expression(location.Row));
+                row[assignments[i].Column.ColumnIndex] = CoerceValue(assignments[i].Column, values[i]);
             }
-            if (!dryRun)
-            {
-                table.UpdateRow(location.PageNumber, location.RowNumber, values);
-            }
-            affected++;
+            table.UpdateRow(location.PageNumber, location.RowNumber, row);
         }
-        return affected;
+        return updates.Count;
     }
 
-    private static int ExecuteDelete(File.Database db, Mirror mirror, List<Token> tokens, IReadOnlyList<object?>? parameters, bool dryRun)
+    private static int ExecuteDeleteJoin(File.Database db, Mirror mirror, List<Token> tokens,
+        IReadOnlyList<object?>? parameters, bool dryRun)
     {
-        int pos = 0;
-        ExpectWord(tokens, ref pos, "delete");
-        ExpectWord(tokens, ref pos, "from");
-        Table table = ReadTable(db, tokens, ref pos);
-
-        WhereClause? where = TryParseWhere(tokens, ref pos, table, parameters, 0, mirror);
-        where?.ValidateSyntax();
-
-        int affected = 0;
-        foreach (Table.RowLocation location in table.RowLocations())
+        int fromIndex = FindTopLevelWord(tokens, "from", 1);
+        if (fromIndex < 0 || fromIndex + 1 >= tokens.Count)
         {
-            if (where != null && !where.Matches(location.Row))
+            throw new NotSupportedException("DELETE JOIN requires a FROM clause.");
+        }
+        int whereIndex = FindTopLevelWord(tokens, "where", fromIndex + 1);
+        int end = whereIndex < 0 ? tokens.Count : whereIndex;
+        string targetName = tokens[fromIndex + 1].Text;
+        Table table = ResolveTable(db, targetName);
+        string targetReference = GetTargetReference(tokens, fromIndex + 1, end);
+        string fromClause = RebuildSql(tokens, fromIndex + 1, end);
+        string selectSql = $"SELECT DISTINCT {targetReference}.rowid FROM {fromClause}"
+            + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
+        string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+        if (parameterCount != (parameters?.Count ?? 0))
+        {
+            throw new InvalidOperationException(
+                $"The DELETE JOIN expects {parameterCount} positional parameter value(s), but {parameters?.Count ?? 0} were supplied.");
+        }
+
+        var locations = new Dictionary<(int Page, int Row), Table.RowLocation>();
+        using (MirrorReader reader = mirror.ExecuteReader(translated, parameters))
+        {
+            while (reader.Read())
             {
-                continue;
+                long sqliteRowId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (!mirror.TryGetRowLocation(targetName, sqliteRowId, out Table.RowLocation location))
+                {
+                    throw new InvalidOperationException(
+                        $"The mirror did not contain a file locator for target table '{targetName}'.");
+                }
+                locations[(location.PageNumber, location.RowNumber)] = location;
             }
+        }
+
+        foreach (Table.RowLocation location in locations.Values
+                     .OrderByDescending(item => item.PageNumber)
+                     .ThenByDescending(item => item.RowNumber))
+        {
             if (!dryRun)
             {
                 table.DeleteRow(location.PageNumber, location.RowNumber);
             }
-            affected++;
         }
-        return affected;
+        return locations.Count;
+    }
+
+    private static bool HasTopLevelJoin(List<Token> tokens)
+        => FindTopLevelWord(tokens, "join", 1) >= 0;
+
+    private static int FindTopLevelWord(List<Token> tokens, string word, int start)
+    {
+        int depth = 0;
+        for (int i = start; i < tokens.Count; i++)
+        {
+            if (tokens[i].Text == "(")
+            {
+                depth++;
+            }
+            else if (tokens[i].Text == ")")
+            {
+                depth--;
+            }
+            else if (depth == 0 && tokens[i].Text.Equals(word, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static string GetTargetReference(List<Token> tokens, int tableIndex, int end = -1)
+    {
+        end = end < 0 ? tokens.Count : end;
+        int next = tableIndex + 1;
+        if (next < end && tokens[next].Text.Equals("as", StringComparison.OrdinalIgnoreCase))
+        {
+            return RenderToken(tokens[next + 1]);
+        }
+        if (next < end && tokens[next].Kind is Kind.Word or Kind.Ident
+            && !tokens[next].Text.Equals("inner", StringComparison.OrdinalIgnoreCase)
+            && !tokens[next].Text.Equals("left", StringComparison.OrdinalIgnoreCase)
+            && !tokens[next].Text.Equals("right", StringComparison.OrdinalIgnoreCase)
+            && !tokens[next].Text.Equals("full", StringComparison.OrdinalIgnoreCase)
+            && !tokens[next].Text.Equals("join", StringComparison.OrdinalIgnoreCase))
+        {
+            return RenderToken(tokens[next]);
+        }
+        return RenderToken(tokens[tableIndex]);
+    }
+
+    private static List<(Column Column, string Expression)> ParseAssignments(
+        List<Token> tokens, int start, int end, Table table)
+    {
+        var result = new List<(Column Column, string Expression)>();
+        foreach ((int Start, int End) range in SplitTopLevel(tokens, start, end, ","))
+        {
+            int equals = FindTopLevelSymbol(tokens, "=", range.Start, range.End);
+            if (equals <= range.Start || equals + 1 >= range.End)
+            {
+                throw new NotSupportedException("Each UPDATE JOIN assignment must contain an expression.");
+            }
+            string columnName = tokens[equals - 1].Text;
+            Column? column = table.Columns.FirstOrDefault(item =>
+                item.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase));
+            if (column == null)
+            {
+                throw new InvalidOperationException($"Unknown target column '{columnName}'.");
+            }
+            result.Add((column, RebuildSql(tokens, equals + 1, range.End)));
+        }
+        return result;
+    }
+
+    private static int FindTopLevelSymbol(List<Token> tokens, string symbol, int start, int end)
+    {
+        int depth = 0;
+        for (int i = start; i < end; i++)
+        {
+            if (tokens[i].Text == "(") depth++;
+            else if (tokens[i].Text == ")") depth--;
+            else if (depth == 0 && tokens[i].Text == symbol) return i;
+        }
+        return -1;
+    }
+
+    private static IEnumerable<(int Start, int End)> SplitTopLevel(
+        List<Token> tokens, int start, int end, string separator)
+    {
+        int depth = 0;
+        int partStart = start;
+        for (int i = start; i < end; i++)
+        {
+            if (tokens[i].Text == "(") depth++;
+            else if (tokens[i].Text == ")") depth--;
+            else if (depth == 0 && tokens[i].Text == separator)
+            {
+                yield return (partStart, i);
+                partStart = i + 1;
+            }
+        }
+        if (partStart < end)
+        {
+            yield return (partStart, end);
+        }
+    }
+
+    private static Table ResolveTable(File.Database db, string name)
+    {
+        try
+        {
+            return db.GetTable(name) ?? db.GetLinkedTable(name)
+                ?? throw new InvalidOperationException($"Table '{name}' does not exist.");
+        }
+        catch (DatabaseException ex) when (ex.Message.Contains("linked table", StringComparison.OrdinalIgnoreCase))
+        {
+            return db.GetLinkedTable(name)
+                ?? throw new InvalidOperationException($"Table '{name}' does not exist.");
+        }
+    }
+
+    private sealed class AccessObjectComparer : IEqualityComparer<object?>
+    {
+        public static readonly AccessObjectComparer Instance = new();
+
+        public new bool Equals(object? x, object? y)
+            => x == null || x is DBNull ? y == null || y is DBNull : y != null && y is not DBNull
+                && string.Equals(Convert.ToString(x, CultureInfo.InvariantCulture),
+                    Convert.ToString(y, CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode(object? obj)
+            => Convert.ToString(obj, CultureInfo.InvariantCulture)?.ToUpperInvariant().GetHashCode() ?? 0;
+    }
+
+    private static int ExecuteUpdate(File.Database db, Mirror mirror, List<Token> tokens, IReadOnlyList<object?>? parameters, bool dryRun)
+        => ExecuteUpdateFromMirror(db, mirror, tokens, parameters, dryRun);
+
+    private static int ExecuteDelete(File.Database db, Mirror mirror, List<Token> tokens, IReadOnlyList<object?>? parameters, bool dryRun)
+        => ExecuteDeleteFromMirror(db, mirror, tokens, parameters, dryRun);
+
+    private static int ExecuteUpdateFromMirror(File.Database db, Mirror mirror, List<Token> tokens,
+        IReadOnlyList<object?>? parameters, bool dryRun)
+    {
+        int setIndex = FindTopLevelWord(tokens, "set", 1);
+        if (setIndex < 0)
+        {
+            throw new NotSupportedException("UPDATE requires a SET clause.");
+        }
+        int whereIndex = FindTopLevelWord(tokens, "where", setIndex + 1);
+        int end = whereIndex < 0 ? tokens.Count : whereIndex;
+        string targetName = tokens[1].Text;
+        Table table = ResolveTable(db, targetName);
+        List<(Column Column, string Expression)> assignments = ParseAssignments(tokens, setIndex + 1, end, table);
+        string targetReference = GetTargetReference(tokens, 1, setIndex);
+        string fromClause = RebuildSql(tokens, 1, setIndex);
+        string selectSql = $"SELECT {targetReference}.rowid, "
+            + string.Join(", ", assignments.Select(item => item.Expression))
+            + $" FROM {fromClause}"
+            + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
+        string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+        if (parameterCount != (parameters?.Count ?? 0))
+        {
+            throw new InvalidOperationException(
+                $"The UPDATE expects {parameterCount} positional parameter value(s), but {parameters?.Count ?? 0} were supplied.");
+        }
+
+        var updates = new List<(Table.RowLocation Location, object?[] Values)>();
+        using (MirrorReader reader = mirror.ExecuteReader(translated, parameters))
+        {
+            while (reader.Read())
+            {
+                long sqliteRowId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (!mirror.TryGetRowLocation(targetName, sqliteRowId, out Table.RowLocation location))
+                {
+                    throw new InvalidOperationException(
+                        $"The mirror did not contain a file locator for target table '{targetName}'.");
+                }
+                object?[] values = new object?[assignments.Count];
+                for (int i = 0; i < values.Length; i++)
+                {
+                    values[i] = reader.IsDBNull(i + 1) ? null : reader.GetValue(i + 1);
+                }
+                updates.Add((location, values));
+            }
+        }
+
+        foreach ((Table.RowLocation location, object?[] values) in updates
+                     .OrderByDescending(item => item.Location.PageNumber)
+                     .ThenByDescending(item => item.Location.RowNumber))
+        {
+            if (dryRun)
+            {
+                continue;
+            }
+            object?[] row = location.Row.ToArray();
+            for (int i = 0; i < assignments.Count; i++)
+            {
+                row[assignments[i].Column.ColumnIndex] = CoerceValue(assignments[i].Column, values[i]);
+            }
+            table.UpdateRow(location.PageNumber, location.RowNumber, row);
+        }
+        return updates.Count;
+    }
+
+    private static int ExecuteDeleteFromMirror(File.Database db, Mirror mirror, List<Token> tokens,
+        IReadOnlyList<object?>? parameters, bool dryRun)
+    {
+        if (tokens.Count < 3 || !tokens[1].Text.Equals("from", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException("DELETE requires FROM followed by a table name.");
+        }
+        string targetName = tokens[2].Text;
+        Table table = ResolveTable(db, targetName);
+        int whereIndex = FindTopLevelWord(tokens, "where", 3);
+        string targetReference = GetTargetReference(tokens, 2, whereIndex < 0 ? tokens.Count : whereIndex);
+        string fromClause = RebuildSql(tokens, 2, whereIndex < 0 ? tokens.Count : whereIndex);
+        string selectSql = $"SELECT {targetReference}.rowid FROM {fromClause}"
+            + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
+        string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+        if (parameterCount != (parameters?.Count ?? 0))
+        {
+            throw new InvalidOperationException(
+                $"The DELETE expects {parameterCount} positional parameter value(s), but {parameters?.Count ?? 0} were supplied.");
+        }
+
+        var locations = new List<Table.RowLocation>();
+        using (MirrorReader reader = mirror.ExecuteReader(translated, parameters))
+        {
+            while (reader.Read())
+            {
+                long sqliteRowId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (!mirror.TryGetRowLocation(targetName, sqliteRowId, out Table.RowLocation location))
+                {
+                    throw new InvalidOperationException(
+                        $"The mirror did not contain a file locator for target table '{targetName}'.");
+                }
+                locations.Add(location);
+            }
+        }
+
+        foreach (Table.RowLocation location in locations
+                     .OrderByDescending(item => item.PageNumber)
+                     .ThenByDescending(item => item.RowNumber))
+        {
+            if (!dryRun)
+            {
+                table.DeleteRow(location.PageNumber, location.RowNumber);
+            }
+        }
+        return locations.Count;
     }
 
     // ------------------------------------------------------------------
@@ -304,51 +667,7 @@ public static class AccessDml
     /// Converts a SQL value to the CLR value expected by the given column.
     /// </summary>
     private static object? CoerceValue(Column column, object? value)
-    {
-        if (value == null || value is DBNull)
-        {
-            return null;
-        }
-        CultureInfo invariant = CultureInfo.InvariantCulture;
-        switch (column.Type)
-        {
-            case DataType.Byte:
-                return Convert.ToByte(value, invariant);
-            case DataType.Int:
-                return Convert.ToInt16(value, invariant);
-            case DataType.Long:
-                return Convert.ToInt32(value, invariant);
-            case DataType.BigInt:
-                return Convert.ToInt64(value, invariant);
-            case DataType.Money:
-            case DataType.Numeric:
-                return Convert.ToDecimal(value, invariant);
-            case DataType.Float:
-                return Convert.ToSingle(value, invariant);
-            case DataType.Double:
-                return Convert.ToDouble(value, invariant);
-            case DataType.ShortDateTime:
-            case DataType.ExtDateTime:
-                return value is DateTime dt ? dt : Convert.ToDateTime(value, invariant);
-            case DataType.Boolean:
-                return value switch
-                {
-                    bool b => b,
-                    string s => s.Equals("true", StringComparison.OrdinalIgnoreCase) || s is "1" or "-1",
-                    _ => Convert.ToBoolean(value, invariant),
-                };
-            case DataType.Guid:
-                return value.ToString();
-            case DataType.Text:
-            case DataType.Memo:
-                return value.ToString();
-            case DataType.Binary:
-            case DataType.Ole:
-                return value is byte[] bytes ? bytes : Encoding.UTF8.GetBytes(value.ToString() ?? "");
-            default:
-                return value;
-        }
-    }
+        => AccessValueCodec.CoerceForColumn(column, value);
 
     // ------------------------------------------------------------------
     // WHERE clause parsing + evaluation
@@ -382,12 +701,12 @@ public static class AccessDml
         {
             _pos = _start;
             _paramCount = _startParamCount;
-            bool result = ParseOr(row);
+            AccessTruthValue result = ParseOr(row);
             if (_pos < _tokens.Count)
             {
                 throw new InvalidOperationException($"Unexpected token '{_tokens[_pos].Text}' in WHERE clause.");
             }
-            return result;
+            return result.IsTrue();
         }
 
         internal void ValidateSyntax()
@@ -399,29 +718,29 @@ public static class AccessDml
 
         // ---- grammar ----
 
-        private bool ParseOr(Row row)
+        private AccessTruthValue ParseOr(Row row)
         {
-            bool left = ParseAnd(row);
+            AccessTruthValue left = ParseAnd(row);
             while (MatchWord("or"))
             {
-                bool right = ParseAnd(row);
-                left = left || right;
+                AccessTruthValue right = ParseAnd(row);
+                left = AccessTruth.Or(left, right);
             }
             return left;
         }
 
-        private bool ParseAnd(Row row)
+        private AccessTruthValue ParseAnd(Row row)
         {
-            bool left = ParseNot(row);
+            AccessTruthValue left = ParseNot(row);
             while (MatchWord("and"))
             {
-                bool right = ParseNot(row);
-                left = left && right;
+                AccessTruthValue right = ParseNot(row);
+                left = AccessTruth.And(left, right);
             }
             return left;
         }
 
-        private bool ParseNot(Row row)
+        private AccessTruthValue ParseNot(Row row)
         {
             if (PeekWord("not"))
             {
@@ -434,18 +753,18 @@ public static class AccessDml
                     _pos = save;
                     return ParsePredicate(row);
                 }
-                return !ParseNot(row);
+                return AccessTruth.Not(ParseNot(row));
             }
             return ParsePredicate(row);
         }
 
-        private bool ParsePredicate(Row row)
+        private AccessTruthValue ParsePredicate(Row row)
         {
             Token cur = PeekToken();
             if (cur.Text == "(")
             {
                 _pos++;
-                bool v = ParseOr(row);
+                AccessTruthValue v = ParseOr(row);
                 Expect(")");
                 return v;
             }
@@ -463,10 +782,10 @@ public static class AccessDml
                     Expect("(");
                     List<object?> set = EvaluateSubquery(_pos, out int after);
                     _pos = after;
-                    return set.Count == 0;
+                    return set.Count == 0 ? AccessTruthValue.True : AccessTruthValue.False;
                 }
                 object? nl = ParseOperand(row);
-                return !ParsePostfix(row, nl);
+                return AccessTruth.Not(ParsePostfix(row, nl));
             }
 
             // EXISTS (subquery)
@@ -478,7 +797,7 @@ public static class AccessDml
                 {
                     List<object?> set = EvaluateSubquery(_pos, out int after);
                     _pos = after;
-                    return set.Count > 0;
+                    return set.Count > 0 ? AccessTruthValue.True : AccessTruthValue.False;
                 }
                 throw new InvalidOperationException("EXISTS requires a SELECT subquery.");
             }
@@ -493,7 +812,8 @@ public static class AccessDml
                 bool negate = MatchWord("not");
                 Expect("null");
                 bool isNull = left == null || left is DBNull;
-                return negate ? !isNull : isNull;
+                bool result = negate ? !isNull : isNull;
+                return result ? AccessTruthValue.True : AccessTruthValue.False;
             }
 
             // [NOT] IN / LIKE / BETWEEN (operand NOT operator)
@@ -503,7 +823,7 @@ public static class AccessDml
                     || nn2.Text.Equals("between", StringComparison.OrdinalIgnoreCase)))
             {
                 _pos += 2;
-                return !ParsePostfix(row, left);
+                return AccessTruth.Not(ParsePostfix(row, left));
             }
 
             if (next.Text.Equals("in", StringComparison.OrdinalIgnoreCase)
@@ -527,7 +847,7 @@ public static class AccessDml
             return Truthy(left);
         }
 
-        private bool ParsePostfix(Row row, object? left)
+        private AccessTruthValue ParsePostfix(Row row, object? left)
         {
             string op = _tokens[_pos - 1].Text.ToUpperInvariant();
             switch (op)
@@ -538,7 +858,7 @@ public static class AccessDml
                     {
                         List<object?> set = EvaluateSubquery(_pos, out int after);
                         _pos = after;
-                        return set.Any(v => ValuesEqual(left, v));
+                        return InResult(left, set);
                     }
                     var inValues = new List<object?>();
                     while (true)
@@ -551,21 +871,54 @@ public static class AccessDml
                         break;
                     }
                     Expect(")");
-                    return inValues.Any(v => ValuesEqual(left, v));
+                    return InResult(left, inValues);
                 case "LIKE":
                 {
                     object? pattern = ParseOperand(row);
-                    return left != null && AccessFunctions.AccessLikePattern(left.ToString()!, pattern?.ToString() ?? "");
+                    if (left == null || left is DBNull || pattern == null || pattern is DBNull)
+                    {
+                        return AccessTruthValue.Unknown;
+                    }
+                    return AccessFunctions.AccessLikePattern(left.ToString()!, pattern.ToString()!)
+                        ? AccessTruthValue.True
+                        : AccessTruthValue.False;
                 }
                 case "BETWEEN":
                 {
                     object? low = ParseOperand(row);
                     ExpectWord("and");
                     object? high = ParseOperand(row);
-                    return Compare(left, low, ">=") && Compare(left, high, "<=");
+                    return AccessTruth.And(Compare(left, low, ">="), Compare(left, high, "<="));
                 }                default:
                     throw new InvalidOperationException($"Unsupported operator '{op}'.");
             }
+        }
+
+        private static AccessTruthValue InResult(object? left, IReadOnlyList<object?> values)
+        {
+            if (values.Count == 0)
+            {
+                return AccessTruthValue.False;
+            }
+            if (left == null || left is DBNull)
+            {
+                return AccessTruthValue.Unknown;
+            }
+
+            bool hasNull = false;
+            foreach (object? value in values)
+            {
+                if (value == null || value is DBNull)
+                {
+                    hasNull = true;
+                    continue;
+                }
+                if (ValuesEqual(left, value))
+                {
+                    return AccessTruthValue.True;
+                }
+            }
+            return hasNull ? AccessTruthValue.Unknown : AccessTruthValue.False;
         }
 
         /// <summary>
@@ -609,7 +962,7 @@ public static class AccessDml
                 throw new InvalidOperationException("Subqueries in WHERE require the SQLite mirror.");
             }
             string translated = AccessSqlTranslator.Translate(subSql, out int parameterCount, out _,
-                _mirror.IsMoneyColumn, _mirror.IsExactDecimalColumn);
+                _mirror.IsMoneyColumn, _mirror.IsExactDecimalColumn, _mirror.IsDateColumn);
             var results = new List<object?>();
             IReadOnlyList<object?>? subqueryParameters = null;
             if (parameterCount > 0)
@@ -1016,24 +1369,24 @@ public static class AccessDml
         _ => false,
     };
 
-    private static bool Compare(object? left, object? right, string op)
-    {
-        if (left == null || right == null || left is DBNull || right is DBNull)
+        private static AccessTruthValue Compare(object? left, object? right, string op)
         {
-            // SQL NULL semantics: any comparison against NULL is false
-            return false;
-        }
-        int cmp = CompareValues(left, right);
-        return op switch
-        {
-            "=" => cmp == 0,
+            if (left == null || right == null || left is DBNull || right is DBNull)
+            {
+                return AccessTruthValue.Unknown;
+            }
+            int cmp = CompareValues(left, right);
+            bool result = op switch
+            {
+                "=" => cmp == 0,
             "<>" => cmp != 0,
             "<" => cmp < 0,
             ">" => cmp > 0,
             "<=" => cmp <= 0,
-            ">=" => cmp >= 0,
-            _ => throw new InvalidOperationException($"Unsupported operator '{op}'."),
-        };
+                ">=" => cmp >= 0,
+                _ => throw new InvalidOperationException($"Unsupported operator '{op}'."),
+            };
+            return result ? AccessTruthValue.True : AccessTruthValue.False;
     }
 
     private static bool ValuesEqual(object? left, object? right)
@@ -1066,22 +1419,26 @@ public static class AccessDml
         => value is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal
             or System.Numerics.BigInteger;
 
-    private static bool Truthy(object? value)
-    {
-        if (value == null || value is DBNull)
+        private static AccessTruthValue Truthy(object? value)
         {
-            return false;
+            if (value == null || value is DBNull)
+            {
+                return AccessTruthValue.Unknown;
+            }
+            if (value is bool b)
+            {
+                return b ? AccessTruthValue.True : AccessTruthValue.False;
+            }
+            if (value is string s)
+            {
+                return s.Equals("true", StringComparison.OrdinalIgnoreCase) || s != "0"
+                    ? AccessTruthValue.True
+                    : AccessTruthValue.False;
+            }
+            return Convert.ToDouble(value, CultureInfo.InvariantCulture) != 0.0d
+                ? AccessTruthValue.True
+                : AccessTruthValue.False;
         }
-        if (value is bool b)
-        {
-            return b;
-        }
-        if (value is string s)
-        {
-            return s.Equals("true", StringComparison.OrdinalIgnoreCase) || s != "0";
-        }
-        return Convert.ToDouble(value, CultureInfo.InvariantCulture) != 0.0d;
-    }
 
     // ------------------------------------------------------------------
     // value parsing

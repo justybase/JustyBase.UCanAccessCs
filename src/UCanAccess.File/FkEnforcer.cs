@@ -85,7 +85,8 @@ internal static class FkEnforcer
     }
 
     /// <summary>handles foreign-key constraints when updating a row</summary>
-    internal static void UpdateRow(Table table, object?[] oldValues, object?[] newValues)
+    internal static void UpdateRow(Table table, object?[] oldValues, object?[] newValues,
+        bool skipForeignKeyValidation = false)
     {
         Database db = table.Database;
         if (!db.EnforceForeignKeys)
@@ -93,26 +94,31 @@ internal static class FkEnforcer
             return;
         }
 
-        // secondary (FK) side: the new foreign-key values must reference an existing row
-        foreach (Relationship rel in db.GetRelationships())
+        // secondary (FK) side: the new foreign-key values must reference an existing row.
+        // A parent-side cascade supplies the new referenced key before the parent row
+        // itself has been written, so that internal child update skips this check.
+        if (!skipForeignKeyValidation)
         {
-            if (!IsSameTable(rel.ToTable, table) || !rel.HasReferentialIntegrity)
+            foreach (Relationship rel in db.GetRelationships())
             {
-                continue;
-            }
-            EnsureComplete(rel);
-            if (!ColumnsChanged(rel.ToColumns, oldValues, newValues))
-            {
-                continue;
-            }
-            if (AreNull(rel.ToColumns, newValues))
-            {
-                continue;
-            }
-            if (!HasRow(rel.FromTable, rel.FromColumns, ValuesAt(rel.ToColumns, newValues)))
-            {
-                throw new DatabaseException(
-                    $"Updating row in '{table.Name}' violates foreign key constraint '{rel.Name}' (missing referenced row in '{rel.FromTable.Name}').");
+                if (!IsSameTable(rel.ToTable, table) || !rel.HasReferentialIntegrity)
+                {
+                    continue;
+                }
+                EnsureComplete(rel);
+                if (!ColumnsChanged(rel.ToColumns, oldValues, newValues))
+                {
+                    continue;
+                }
+                if (AreNull(rel.ToColumns, newValues))
+                {
+                    continue;
+                }
+                if (!HasRow(rel.FromTable, rel.FromColumns, ValuesAt(rel.ToColumns, newValues)))
+                {
+                    throw new DatabaseException(
+                        $"Updating row in '{table.Name}' violates foreign key constraint '{rel.Name}' (missing referenced row in '{rel.FromTable.Name}').");
+                }
             }
         }
 
@@ -145,7 +151,8 @@ internal static class FkEnforcer
                     {
                         childValues[rel.ToColumns[i].ColumnIndex] = newValues[rel.FromColumns[i].ColumnIndex];
                     }
-                    rel.ToTable.UpdateRow(loc.PageNumber, loc.RowNumber, childValues);
+                    rel.ToTable.UpdateRow(loc.PageNumber, loc.RowNumber, childValues,
+                        skipForeignKeyValidation: true);
                 }
             }
             else

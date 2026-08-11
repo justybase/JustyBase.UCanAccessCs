@@ -474,6 +474,10 @@ public sealed class Table
     /// without index maintenance).
     /// </summary>
     public object?[] UpdateRow(int pageNumber, int rowNumber, object?[] values)
+        => UpdateRow(pageNumber, rowNumber, values, skipForeignKeyValidation: false);
+
+    internal object?[] UpdateRow(int pageNumber, int rowNumber, object?[] values,
+        bool skipForeignKeyValidation)
     {
         if (_database.IsReadOnly)
         {
@@ -550,7 +554,7 @@ public sealed class Table
                     ReadColumnValue(oldPage, oldRowStart, oldRowEnd, complexColumn);
             }
             var rowId = new RowId(pageNumber, rowNumber);
-            FkEnforcer.UpdateRow(this, oldRowValues, values);
+            FkEnforcer.UpdateRow(this, oldRowValues, values, skipForeignKeyValidation);
             IndexData.PendingChange? idxChange = null;
             try
             {

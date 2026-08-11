@@ -70,12 +70,13 @@ public static class AccessSqlTranslator
     /// </param>
     public static string Translate(string accessSql, out int parameterCount, out IReadOnlyList<string>? namedParameters,
         Func<string, bool>? isMoneyColumn = null,
-        Func<string, bool>? isExactDecimalColumn = null)
+        Func<string, bool>? isExactDecimalColumn = null,
+        Func<string, bool>? isDateColumn = null)
     {
         if (CrosstabTranslator.TryTranslate(accessSql, isExactDecimalColumn, out string crosstabSql))
         {
             return Translate(crosstabSql, out parameterCount, out namedParameters,
-                isMoneyColumn, isExactDecimalColumn);
+                isMoneyColumn, isExactDecimalColumn, isDateColumn);
         }
 
         string prepared = Preprocess(accessSql, out List<string> names);
@@ -177,6 +178,7 @@ public static class AccessSqlTranslator
             }
         }
 
+        RewriteDateExpressions(work, isDateColumn);
         RewriteExactDecimalExpressions(work, isExactDecimalColumn);
         RewriteExactDecimalAggregates(work, isExactDecimalColumn);
 
@@ -489,6 +491,96 @@ public static class AccessSqlTranslator
                 && work[start].Kind is Kind.Word or Kind.Ident
                 && work[start + 1].Text == "."
                 && work[start + 2].Kind is Kind.Word or Kind.Ident;
+
+    private static void RewriteDateExpressions(List<Token> work, Func<string, bool>? isDateColumn)
+    {
+        if (isDateColumn == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < work.Count; i++)
+        {
+            string operation = work[i].Text;
+            if (operation is not ("+" or "-") || IsUnaryOperator(work, i))
+            {
+                continue;
+            }
+
+            int leftStart = FindLeftOperandStart(work, i);
+            int rightEnd = FindRightOperandEnd(work, i + 1);
+            if (leftStart >= i || rightEnd <= i + 1)
+            {
+                continue;
+            }
+
+            bool leftDate = IsDateOperand(work, leftStart, i, isDateColumn);
+            bool rightDate = IsDateOperand(work, i + 1, rightEnd, isDateColumn);
+            bool leftNumeric = IsNumericExpression(work, leftStart, i);
+            bool rightNumeric = IsNumericExpression(work, i + 1, rightEnd);
+            string left = Join(work, leftStart, i);
+            string right = Join(work, i + 1, rightEnd);
+            string? replacement = null;
+
+            if (operation == "-" && leftDate && rightDate)
+            {
+                replacement = $"uca_date_diff_days({left}, {right})";
+            }
+            else if (leftDate && rightNumeric)
+            {
+                replacement = operation == "+"
+                    ? $"uca_date_add_days({left}, {right})"
+                    : $"uca_date_add_days({left}, -({right}))";
+            }
+            else if (operation == "+" && rightDate && leftNumeric)
+            {
+                replacement = $"uca_date_add_days({right}, {left})";
+            }
+
+            if (replacement == null)
+            {
+                continue;
+            }
+
+            ReplaceTokens(work, leftStart, rightEnd, replacement);
+            i = leftStart + Tokenize(replacement).Count - 1;
+        }
+    }
+
+    private static bool IsDateOperand(List<Token> work, int start, int end, Func<string, bool> isDateColumn)
+    {
+        if (end - start == 1 && work[start].Kind == Kind.Date)
+        {
+            return true;
+        }
+        if (end - start == 1 && work[start].Kind is Kind.Word or Kind.Ident)
+        {
+            return isDateColumn(work[start].Text);
+        }
+        if (end - start == 3 && work[start + 1].Text == "."
+            && work[start].Kind is Kind.Word or Kind.Ident
+            && work[start + 2].Kind is Kind.Word or Kind.Ident)
+        {
+            return isDateColumn($"{work[start].Text}.{work[start + 2].Text}");
+        }
+        return false;
+    }
+
+    private static bool IsNumericExpression(List<Token> work, int start, int end)
+    {
+        if (start >= end)
+        {
+            return false;
+        }
+        return work.Skip(start).Take(end - start).All(token =>
+            token.Kind == Kind.Number
+            || token.Text is "+" or "-" or "(" or ")" or "."
+            || token.Text == "?"
+            || token.Kind is Kind.Word or Kind.Ident &&
+                (token.Text.StartsWith("@", StringComparison.Ordinal)
+                    || token.Text.StartsWith(":", StringComparison.Ordinal)
+                    || token.Text.StartsWith("$", StringComparison.Ordinal)));
+    }
 
     private static void RewriteExactDecimalAggregates(List<Token> work, Func<string, bool>? isExactDecimalColumn)
     {

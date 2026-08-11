@@ -60,8 +60,15 @@ jobs:
 
       - uses: actions/setup-java@v5
         with:
+          # Temurin is only the CI default. The local oracle script accepts any
+          # compatible JDK distribution; Oracle-vendor Java is not required.
           distribution: temurin
           java-version: 21
+
+      - name: Verify compatible Java toolchain
+        run: |
+          java -version
+          javac -version
 
       - uses: actions/setup-dotnet@v5
         with:

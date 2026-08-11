@@ -25,7 +25,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 |---|---:|---|
 | SELECT, filtering, grouping, HAVING, ordering | ✅ | Executed through the SQLite mirror with Access rewrites. |
 | INNER/LEFT/RIGHT/FULL JOIN | ✅ | Covered by the SQL parity corpus where supported by SQLite translation. |
-| Subqueries, UNION/EXCEPT/INTERSECT, CTE | ✅ | Non-correlated DML subqueries are supported. |
+| Subqueries, UNION/EXCEPT/INTERSECT, CTE | ✅ | SELECT and correlated DML subqueries are evaluated by the SQLite mirror. |
 | DISTINCT, DISTINCTROW, TOP n | ✅ | `TOP n PERCENT` is rejected explicitly. |
 | Window functions | ✅ | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, partitions, ordering, and SQLite window frames are preserved by the translator. |
 | TRANSFORM/PIVOT crosstab queries | 🟡 | Explicit `IN (...)` and inline dynamic pivots are supported; saved dynamic pivots with parameters remain limited. |
@@ -41,7 +41,9 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | Feature | Status | Notes |
 |---|---:|---|
 | INSERT, multi-row INSERT, INSERT…SELECT | ✅ | Includes parameters and supported type coercion. |
-| UPDATE and DELETE | ✅ | Includes expressions, subqueries, indexes, foreign-key checks, and long values. |
+| UPDATE and DELETE | ✅ | Includes translated expressions, correlated subqueries, UPDATE/DELETE JOIN, foreign-key checks, and long values. |
+| DML NULL semantics | ✅ | WHERE selection follows SQL three-valued logic; UNKNOWN never selects a row. |
+| Generated AutoNumber | ✅ | Numeric AutoNumber from the latest successful INSERT is exposed through `LastInsertedId`. |
 | Positional/named parameters | ✅ | `?`, `@name`, `:name`, `$name`, and declared `PARAMETERS` references. |
 | CREATE TABLE | ✅ | Supported Access types, indexes, and column-level `NOT NULL` are written to the file property map. |
 | CREATE TABLE AS SELECT | ✅ | `WITH DATA` copies rows; `WITH NO DATA` copies the inferred scalar schema. |
@@ -49,7 +51,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | ALTER ADD/DROP COLUMN | 🟡 | Implemented by safe table recreation which preserves supported column properties; autonumber, calculated, and relationship-bearing tables are rejected. `ADD ... NOT NULL` is rejected for non-empty tables without a default. |
 | CREATE/DROP INDEX | ✅ | Uses a same-directory staging copy and mutates only index/table-definition pages; row pages, row locations, data, and retained B-trees are preserved. Relationship/shared indexes remain limited. |
 | CREATE/DROP VIEW | ❌ | Saved SELECT queries are exposed as read-only mirror views; creating new saved queries is not implemented. |
-| Commit/rollback transactions | ✅ | Writes are applied to a staged file copy and installed atomically. Native linked-table transactions are rejected. |
+| Commit/rollback transactions | ✅ | Writes are applied to a staged file copy and installed atomically. Native linked-table transactions are rejected. Autocommit DML uses the same safety boundary. |
 | Transaction savepoints | ✅ | `DbTransaction.Save` and rollback-to-savepoint use private staging snapshots. |
 | DML through linked tables | ✅ | Direct DML can reach the link target; atomic transactions containing native links are not supported. |
 
@@ -57,7 +59,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 
 | Feature | Status | Notes |
 |---|---:|---|
-| DbConnection/DbCommand/DbDataReader | ✅ | Includes scalar queries, batches, cancellation, command timeout, and disposal. |
+| DbConnection/DbCommand/DbDataReader | ✅ | Includes scalar queries, batched DML staging, cancellation, command timeout, and disposal. |
 | DbParameter/parameter collection | ✅ | Case-insensitive named lookup and input parameters. |
 | DbTransaction | ✅ | One active transaction per connection; rollback on close/dispose. |
 | GetSchema tables/columns/indexes/keys/views | 🟡 | Core collections and restrictions are implemented; foreign-key metadata is name-level. |
@@ -74,6 +76,8 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | `Column Order=natural|display` | ✅ | Selects file or Access display order. |
 | `Lazy Load` | ✅ | Controls whether the mirror is built during `Open`. |
 | `Keep Mirror` | ✅ | `false` uses a per-operation mirror; transactions keep their staged mirror. |
+| `Mirror Mode=memory|file` | ✅ | File mode uses a provider-owned SQLite file and avoids keeping all mirror pages only in process memory. |
+| `Mirror Path` / `Mirror Folder` | ✅ | Selects an explicit file mirror or its containing folder. |
 | `Allow External Links` | ✅ | Disabled by default to prevent link-path escape. |
 | `New Database Version` | ✅ | 2000/2002/2003 use the Jet 4 template; 2007/2010/2016 use ACCDB templates. |
 | `Time Zone` / `Prefer Date Timestamp` | 🟡 | Accepted for compatibility; Access values are exposed as timezone-free `DateTime`. |
@@ -89,8 +93,12 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
   ACCDB fixtures, including column properties, indexes, primary/foreign-key
   metadata, relationships, and generated/indexed files.
 - DML, parameter binding, transactions, locking, failed operations, and
-  staging-file hash preservation have dedicated provider tests.
+  staging-file hash preservation have dedicated provider tests. DML tests also
+  cover SQL NULL logic, correlated subqueries, UPDATE/DELETE JOIN, generated
+  AutoNumber values, and atomic failed statements.
 - DDL and write tests verify that files written by the port remain readable by
   the Java Jackcess reader when the Java oracle is available.
 - `tools/JavaOracle/run.ps1` regenerates the Java classes, fixtures, and oracle
-  output without requiring a globally installed database driver.
+  output without requiring a globally installed database driver. It accepts any
+  JDK distribution version 11 or newer and honors `UCANACCESS_JAVA`,
+  `UCANACCESS_JAVAC` and `JAVA_HOME`.

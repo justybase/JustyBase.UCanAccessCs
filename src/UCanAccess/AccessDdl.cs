@@ -46,6 +46,11 @@ public static class AccessDdl
             throw new NotSupportedException("Empty statement.");
         }
 
+        if (!dryRun)
+        {
+            mirror?.ThrowIfActiveReaders();
+        }
+
         string kind = tokens[0].Text.ToUpperInvariant();
         int affected;
         switch (kind)
@@ -297,7 +302,7 @@ public static class AccessDdl
 
         string selectSql = RebuildSql(tokens, selectStart, selectEnd);
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
         if (parameterCount != 0)
         {
             throw new NotSupportedException("CREATE TABLE ... AS SELECT does not support parameters.");
