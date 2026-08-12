@@ -1,7 +1,9 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace UCanAccess;
 
@@ -479,7 +481,7 @@ public sealed class UCanAccessCommand : DbCommand
             ?? (connection.KeepMirror
                 ? connection.Mirror
                 : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase));
-        string effectiveCommandText = CommandText;
+        string effectiveCommandText = RewriteIdentitySelect(CommandText, connection.LastInsertedId);
         var suppliedParameters = _parameters.Cast<UCanAccessParameter>().ToList();
         if (CrosstabTranslator.TryBuildDynamicValueQuery(CommandText, out string valueQuery))
         {
@@ -619,6 +621,57 @@ public sealed class UCanAccessCommand : DbCommand
             throw new NotSupportedException(
                 $"Parameter direction {parameter.Direction} is not supported; only input parameters are supported.");
         }
+    }
+
+    private static string RewriteIdentitySelect(string sql, long? lastInsertedId)
+    {
+        string trimmed = sql.Trim();
+        while (trimmed.EndsWith(';'))
+        {
+            trimmed = trimmed[..^1].TrimEnd();
+        }
+
+        Match match = Regex.Match(trimmed, @"^SELECT\s+@@IDENTITY(?=\s|$)(?<tail>.*)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        if (!match.Success)
+        {
+            return sql;
+        }
+
+        string tail = match.Groups["tail"].Value.Trim();
+        string alias;
+        if (tail.Length == 0)
+        {
+            alias = "[@@IDENTITY]";
+        }
+        else
+        {
+            if (tail.Length >= 2 && tail.StartsWith("AS", StringComparison.OrdinalIgnoreCase)
+                && (tail.Length == 2 || char.IsWhiteSpace(tail[2])))
+            {
+                tail = tail[2..].Trim();
+            }
+            if (!IsIdentityAlias(tail))
+            {
+                return sql;
+            }
+            alias = tail;
+        }
+
+        string value = lastInsertedId?.ToString(CultureInfo.InvariantCulture) ?? "NULL";
+        return $"SELECT {value} AS {alias}";
+    }
+
+    private static bool IsIdentityAlias(string alias)
+    {
+        if (alias.Length >= 2 && ((alias[0] == '[' && alias[^1] == ']')
+                || (alias[0] == '"' && alias[^1] == '"')))
+        {
+            return true;
+        }
+
+        return Regex.IsMatch(alias, @"^[A-Za-z_][A-Za-z0-9_$#@]*$",
+            RegexOptions.CultureInvariant);
     }
 
     private static object?[]? BindQueryParameters(int parameterCount, IReadOnlyList<string>? names,

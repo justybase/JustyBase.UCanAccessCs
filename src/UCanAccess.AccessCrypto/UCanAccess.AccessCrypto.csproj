@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UCanAccess.AccessCrypto</RootNamespace>
+    <PackageId>JustyBase.UCanAccess.AccessCrypto</PackageId>
+    <PackageTags>access accdb encryption crypto aes office agile</PackageTags>
+    <IsPackable>true</IsPackable>
+    <Description>Optional pure .NET codec for password-encrypted modern Access ACCDB files.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="UCanAccess.AccessCrypto.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UCanAccess\UCanAccess.csproj" />
+    <ProjectReference Include="..\UCanAccess.File\UCanAccess.File.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\docs\ACCESS_ENCRYPTION_PROFILE.md" Pack="true" PackagePath="docs\" />
+    <None Include="..\..\docs\images\ucanaccess-csharp-logo-200.png" Pack="true" PackagePath="docs\images\" />
+  </ItemGroup>
+</Project>

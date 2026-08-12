@@ -227,6 +227,10 @@ public sealed class UCanAccessConnection : DbConnection
         {
             return;
         }
+        if (_connStr?.PreventReloading == true)
+        {
+            return;
+        }
         // Linked databases own their own file handles and can legitimately
         // update a different file. Reopening the main handle opportunistically
         // here would leave a second link resolver alive on Windows; linked-file
@@ -255,6 +259,9 @@ public sealed class UCanAccessConnection : DbConnection
 
         _mirror?.Dispose();
         _mirror = null;
+        // A reload starts a new file snapshot.  @@IDENTITY is scoped to the
+        // current provider session and must not refer to the previous handle.
+        ClearLastInsertedId();
         _database.Dispose();
         _database = OpenDatabaseFile(path, _connStr?.ReadOnly ?? true);
         CaptureSourceFingerprint(_database);
@@ -287,6 +294,10 @@ public sealed class UCanAccessConnection : DbConnection
             _openCount++;
             return;
         }
+        // Opening a new provider session must not inherit @@IDENTITY from the
+        // previous file handle.  Atomic replacement also reaches this path
+        // without going through Close().
+        ClearLastInsertedId();
         string columnOrder = _connStr.ColumnOrder.Trim();
         if (!columnOrder.Equals("natural", StringComparison.OrdinalIgnoreCase)
             && !columnOrder.Equals("display", StringComparison.OrdinalIgnoreCase))
@@ -325,6 +336,7 @@ public sealed class UCanAccessConnection : DbConnection
         }
         catch
         {
+            ClearLastInsertedId();
             _mirror?.Dispose();
             _mirror = null;
             _database?.Dispose();
@@ -350,6 +362,7 @@ public sealed class UCanAccessConnection : DbConnection
             _sourceWriteTicks = 0;
             _state = ConnectionState.Closed;
             _openCount = 0;
+            ClearLastInsertedId();
         }
     }
 
@@ -606,6 +619,10 @@ public sealed class UCanAccessConnection : DbConnection
     /// </summary>
     internal int ExecuteIndexDdlAtomically(string sql)
     {
+        if (AccessDatabase.IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
         ThrowIfActiveReaders();
         string sourcePath = AccessDatabase.Path;
         if (string.IsNullOrEmpty(sourcePath) || !System.IO.File.Exists(sourcePath))

@@ -14,3 +14,18 @@ pwsh tools/AccessFixtures/Generate-ComplexFixture.ps1 `
 The generated file is consumed by `ComplexTypeTests`. The runtime provider does
 not require Access or ACE; it reads and writes the generated flat child tables
 directly.
+
+## Encrypted ACCDB fixture
+
+`Generate-EncryptedFixture.ps1` creates a modern password-encrypted `.accdb`
+through Access/DAO. It is an opt-in developer tool and is not run by normal CI:
+
+```powershell
+$env:UCANACCESS_ACCESS_FIXTURE_PASSWORD = 'Uca!fixture-2026'
+pwsh tools/AccessFixtures/Generate-EncryptedFixture.ps1 `
+  -OutputPath $env:TEMP\uca-encrypted.accdb
+```
+
+The plaintext staging file is temporary and removed after the encrypted copy is
+created. The password is never printed by the script. Runtime code uses the
+optional `JustyBase.UCanAccess.AccessCrypto` package and does not require Access.

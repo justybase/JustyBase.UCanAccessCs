@@ -76,17 +76,20 @@ foreach (string name in database.GetTableNames())
 | `Data Source` | path | Required. |
 | `Read Only` | `true` (default) / `false` | |
 | `Encoding` / `Code Page` | | Text decoding. |
-| `Show Schema` | | Schema visibility. |
+| `Show Schema` / `Sys Schema` | | Schema visibility; `Sys Schema` is an upstream alias. |
 | `Column Order` | `natural` / `display` | |
 | `Lazy Load` | | |
-| `Keep Mirror` | | Mirror lifetime. |
+| `Keep Mirror` | `true` / `false` / path | Mirror lifetime; a path is an upstream-compatible persistent file mirror. |
+| `Memory` | `true` / `false` | Upstream alias for `Mirror Mode=memory|file`. |
+| `Immediately Release Resources` / `Single Connection` | | Upstream one-shot mode; releases the provider-owned mirror after each operation. |
+| `Prevent Reloading` | | Does not reopen a changed Access file during this connection. |
 | `Mirror Mode` | `memory` / `file` | SQLite storage mode; memory is the default. |
 | `Mirror Path` | path | Explicit SQLite path for `Mirror Mode=file`. |
 | `Mirror Folder` | path | Folder for an automatically named file mirror. |
 | `Allow External Links` | | Required to open external link targets. |
 | `New Database Version` | `2000` / `2002` / `2003` / `2007` / `2010` / `2016` | For `Database.Create`. |
 | `Time Zone`, `Prefer Date Timestamp` | | Accepted for compatibility; Access stores dates without timezone metadata and the provider exposes them as `DateTime`. |
-| `Password` / `PWD` | | Passed to an application-supplied `IAccessDatabaseOpener`; masked when the connection string is displayed. |
+| `Password` / `PWD` | | Passed to an application-supplied `IAccessDatabaseOpener`; masked when the connection string is displayed. The optional `JustyBase.UCanAccess.AccessCrypto` package supplies a pure-.NET opener for modern encrypted `.accdb` files. |
 
 - `UCanAccessConnection.RegisterFunction` adds a connection-local scalar
   function; register it before `Open()`.
@@ -103,14 +106,16 @@ foreach (string name in database.GetTableNames())
 The implementation intentionally reports unsupported operations instead of
 silently changing the file. Known gaps include:
 
-- password-encrypted databases require an application-supplied
-  `IAccessDatabaseOpener` — the core package does not bundle an Access
-  encryption codec;
+- password-encrypted `.accdb` files require an application-supplied
+  `IAccessDatabaseOpener`; install the optional
+  `JustyBase.UCanAccess.AccessCrypto` package and assign
+  `new AccessCryptoOpener()` for the supported modern Agile profile. The core
+  package remains free of cryptography and Microsoft Access dependencies;
 - existing complex fields (multi-value, attachments) are exposed as typed
   arrays and their flat child rows can be written, but creating a new complex
   field through DDL is unsupported;
 - calculated-column and relationship-bearing table recreation, `CREATE/DROP
-  VIEW`, and `TOP ... PERCENT` remain limited;
+  VIEW`, `TOP ... PERCENT`, and foreign-key DDL remain limited;
 - explicit and inline dynamic crosstab queries are supported; parameterized
   saved dynamic crosstabs remain limited;
 - recognized `MONEY`/`NUMERIC` expressions use the exact-decimal mirror path,
@@ -135,9 +140,11 @@ operation.
 |---|---|
 | [Getting started](docs/GETTING_STARTED.md) | Writes, transactions, savepoints, user-defined functions, low-level API. |
 | [Compatibility matrix](docs/COMPATIBILITY_MATRIX.md) | The ADO.NET behavior contract, feature by feature. |
+| [Parity baseline](docs/PARITY_BASELINE_UCANACCESS_5_1_6.md) | Pinned Java UCanAccess 5.1.6 reference and oracle-refresh rules. |
 | [SQL compatibility](docs/SQL_COMPATIBILITY.md) | Supported Access SQL syntax and translation. |
 | [Coverage](docs/COVERAGE.md) | Test coverage baselines and CI collection contract. |
 | [Security policy](SECURITY.md) | Supported versions and private vulnerability reporting. |
+| [Access encryption profile](docs/ACCESS_ENCRYPTION_PROFILE.md) | Pure-.NET encrypted ACCDB support, limits, and COM validation. |
 
 The sample databases in `samples/` are real Access files, so every example can
 be verified without Microsoft Access or ACE.
@@ -147,6 +154,7 @@ be verified without Microsoft Access or ACE.
 ```text
 src/UCanAccess.File/   Access file-format reader/writer
 src/UCanAccess/        ADO.NET provider, mirror, SQL translator, functions
+src/UCanAccess.AccessCrypto/  Optional pure-.NET encrypted ACCDB codec
 src/UCanAccess.Console CLI dump/create utility
 tests/                 xUnit and Java-oracle parity tests
 tools/JavaOracle/      Java Jackcess/UCanAccess oracle harness

@@ -23,12 +23,13 @@ misleading name.
 | Jet 3 write | Supported | `Jet3WriteTests` and Java read-back | Add corruption/reopen matrix |
 | Access 2007/2010/2016 | Supported | ACCDB fixtures and differential tests | Add 2013/large/OLE fixtures |
 | SELECT, joins, grouping, CTE, set operators | Supported | SQL oracle corpus | Add parameterized corpus cases |
+| `TOP n PERCENT` | Unsupported | Java UCanAccess 5.1.6 rejects it; explicit translator test preserves that boundary | Revisit only with a newer pinned upstream baseline |
 | Window functions | Supported | `WindowFunctionTests` | Add type/null/error parity |
 | `TRANSFORM/PIVOT` | Partial | `CrosstabTests`, translator tests, and `pivot.sql`; explicit `IN (...)` plus inline dynamic forms | Add parameterized saved-QueryDef coverage and richer Access crosstab grammar |
 | INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases | Add larger Java behavioral oracle for DML |
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
-| `ALTER TABLE` | Partial | Safe recreation tests | Expand supported table shapes |
+| `ALTER TABLE` | Partial | Safe recreation tests plus rename and add-primary-key mutation tests; upstream-rejected drop-constraint forms have explicit tests | Add foreign-key constraints and more table shapes |
 | `CREATE/DROP INDEX` | Supported | Index mutation tests | Add shared relationship index cases |
 | `CREATE/DROP VIEW` | Unsupported | Explicit rejection | Persist saved SELECT definitions |
 | Saved SELECT queries | Partial | Read-only mirror views | Add write lifecycle |
@@ -36,7 +37,7 @@ misleading name.
 | Access functions | Partial | Scalar/aggregate/domain registrations, EVAL/financial/statistical extensions and function tests | Generate a complete parity catalog |
 | User-defined scalar functions | Supported | `UCanAccessConnection.RegisterFunction` and function tests | Add an aggregate registration API if needed |
 | Complex types/attachments | Partial | `ComplexTypeTests`, `ComplexTypeProviderTests`, real COM-generated ACCDB fixture; typed arrays and child-table writes | Add version-history and more attachment metadata fixtures; keep complex-field DDL out of scope |
-| Password/encrypted files | Partial | `EncryptionTests`; password masking and `IAccessDatabaseOpener` boundary | Provide a separately maintained codec adapter for real encrypted files |
+| Password/encrypted files | Partial | Optional `JustyBase.UCanAccess.AccessCrypto`; `AccessComRoundTripTests` (opt-in) | Expand the profile matrix; legacy `.mdb` encryption is intentionally unsupported |
 
 ## ADO.NET surface
 
@@ -59,7 +60,8 @@ misleading name.
 | Password/PWD | Partial | Routed to `IAccessDatabaseOpener`; direct core opening fails deterministically |
 | Encoding/Code Page | Supported | Especially relevant to Jet 3 |
 | Show Schema, Column Order | Supported | Tested in metadata/query paths |
-| Lazy Load, Keep Mirror | Supported | In-memory mirror semantics are .NET-specific |
+| Lazy Load, Keep Mirror | Supported | Boolean mirror lifetime plus upstream `keepMirror=<path>` persistent-cache form |
+| Memory, Immediately Release Resources, Prevent Reloading, Sys Schema | Supported | Upstream aliases mapped to the provider's mirror, reload and schema semantics |
 | Mirror Mode, Mirror Path, Mirror Folder | Supported | `memory` is default; `file` uses a provider-owned SQLite cache |
 | Allow External Links | Supported | Disabled by default for path safety |
 | New Database Version | Supported | 2000/2002/2003/2007/2010/2016 |

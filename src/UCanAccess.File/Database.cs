@@ -84,14 +84,15 @@ public sealed class Database : IDisposable
         set => _enforceForeignKeys = value;
     }
 
-    private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly, bool allowExternalLinks)
+    private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly,
+        bool allowExternalLinks, IAccessPageCodec? codec = null)
     {
         _stream = stream;
         _isReadOnly = readOnly;
         _allowExternalLinks = allowExternalLinks;
         _format = JetFormat.GetFormat(ReadHeader(stream));
 
-        _pageChannel = new PageChannel(stream, _format, closeChannel);
+        _pageChannel = new PageChannel(stream, _format, closeChannel, codec);
         _textEncoding = ResolveEncoding(encoding);
 
         _systemCatalog = LoadTable(TableSystemCatalog, PageSystemCatalog, SystemObjectFlag, TypeTable);
@@ -190,15 +191,25 @@ public sealed class Database : IDisposable
     /// <param name="path">path to the .mdb/.accdb file</param>
     /// <param name="encoding">optional text encoding override (only relevant for Jet 3 databases)</param>
     /// <param name="readOnly">whether to open without write intent (default true)</param>
-    public static Database Open(string path, Encoding? encoding = null, bool readOnly = true, bool allowExternalLinks = false)
+    /// <param name="codecFactory">optional page codec factory for an encrypted file</param>
+    public static Database Open(string path, Encoding? encoding = null, bool readOnly = true,
+        bool allowExternalLinks = false, IAccessPageCodecFactory? codecFactory = null)
     {
         if (readOnly)
         {
             var roStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.RandomAccess);
             bool success = false;
+            IAccessPageCodec? codec = null;
             try
             {
-                var db = new Database(roStream, true, encoding, true, allowExternalLinks); db._path = path;
+                JetFormat format = JetFormat.GetFormat(ReadHeader(roStream));
+                if (codecFactory != null)
+                {
+                    byte[] root = ReadRootPage(roStream, format);
+                    codec = codecFactory.Create(new AccessPageCodecContext(
+                        path, format, true, root));
+                }
+                var db = new Database(roStream, true, encoding, true, allowExternalLinks, codec); db._path = path;
                 success = true;
                 return db;
             }
@@ -206,6 +217,7 @@ public sealed class Database : IDisposable
             {
                 if (!success)
                 {
+                    codec?.Dispose();
                     roStream.Dispose();
                 }
             }
@@ -214,6 +226,7 @@ public sealed class Database : IDisposable
         // read-write: first peek the format version to reject read-only formats
         var rwStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.RandomAccess);
         bool ok = false;
+        IAccessPageCodec? codecForWrite = null;
         try
         {
             JetFormat format = JetFormat.GetFormat(ReadHeader(rwStream));
@@ -221,7 +234,13 @@ public sealed class Database : IDisposable
             {
                 throw new DatabaseException($"The database format {format} does not support writing.");
             }
-            var db = new Database(rwStream, true, encoding, false, allowExternalLinks); db._path = path;
+            if (codecFactory != null)
+            {
+                byte[] root = ReadRootPage(rwStream, format);
+                codecForWrite = codecFactory.Create(new AccessPageCodecContext(
+                    path, format, false, root));
+            }
+            var db = new Database(rwStream, true, encoding, false, allowExternalLinks, codecForWrite); db._path = path;
             db.AcquireLock();
             ok = true;
             return db;
@@ -230,6 +249,7 @@ public sealed class Database : IDisposable
         {
             if (!ok)
             {
+                codecForWrite?.Dispose();
                 rwStream.Dispose();
             }
         }
@@ -269,6 +289,25 @@ public sealed class Database : IDisposable
             throw new DatabaseException("The database was opened read-only.");
         }
         return new WriteBatch(this);
+    }
+
+    private static byte[] ReadRootPage(Stream stream, JetFormat format)
+    {
+        byte[] root = new byte[format.PageSize];
+        stream.Position = 0;
+        int total = 0;
+        while (total < root.Length)
+        {
+            int read = stream.Read(root, total, root.Length - total);
+            if (read == 0)
+            {
+                throw new DatabaseException(
+                    $"Failed attempting to read {format.PageSize} bytes from the root page, only read {total}");
+            }
+            total += read;
+        }
+        stream.Position = 0;
+        return root;
     }
 
     internal PageChannel PageChannel => _pageChannel;
@@ -500,9 +539,28 @@ public sealed class Database : IDisposable
         }
     }
 
-    /// <summary>renames a table in the system catalog and the in-memory table list</summary>
-    internal void RenameTable(string fromName, string toName)
+    /// <summary>
+    /// Renames a user table in the system catalog and updates relationship metadata
+    /// that refers to that table.
+    /// </summary>
+    public void RenameTable(string fromName, string toName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fromName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toName);
+        if (fromName.Equals(toName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        if (GetTable(fromName) == null)
+        {
+            throw new InvalidOperationException($"Table '{fromName}' does not exist.");
+        }
+        if (GetTable(toName) != null || GetSystemTable(toName) != null)
+        {
+            throw new InvalidOperationException($"A table named '{toName}' already exists.");
+        }
+
+        bool renamed = false;
         foreach (Table.RowLocation location in _systemCatalog.RowLocations())
         {
             if (TryGetString(location.Row, "Name", out string? catalogName) && catalogName != null
@@ -518,9 +576,17 @@ public sealed class Database : IDisposable
                     }
                 }
                 _systemCatalog.UpdateRow(location.PageNumber, location.RowNumber, values);
+                renamed = true;
                 break;
             }
         }
+
+        if (!renamed)
+        {
+            throw new InvalidOperationException($"Table '{fromName}' was not found in the system catalog.");
+        }
+
+        RenameRelationshipReferences(fromName, toName);
 
         for (int i = 0; i < _tableInfos.Count; i++)
         {
@@ -557,6 +623,37 @@ public sealed class Database : IDisposable
         foreach (Table.RowLocation location in toDelete)
         {
             relTable.DeleteRow(location.PageNumber, location.RowNumber);
+        }
+    }
+
+    private void RenameRelationshipReferences(string fromName, string toName)
+    {
+        Table? relTable = GetSystemTable("MSysRelationships");
+        if (relTable == null)
+        {
+            return;
+        }
+
+        foreach (Table.RowLocation location in relTable.RowLocations())
+        {
+            object?[] values = location.Row.ToArray();
+            bool changed = false;
+            for (int i = 0; i < relTable.Columns.Count; i++)
+            {
+                string column = relTable.Columns[i].Name;
+                if ((column.Equals("szObject", StringComparison.OrdinalIgnoreCase)
+                        || column.Equals("szReferencedObject", StringComparison.OrdinalIgnoreCase))
+                    && values[i] is string name
+                    && name.Equals(fromName, StringComparison.OrdinalIgnoreCase))
+                {
+                    values[i] = toName;
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                relTable.UpdateRow(location.PageNumber, location.RowNumber, values);
+            }
         }
     }
 

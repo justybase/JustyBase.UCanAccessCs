@@ -15,6 +15,9 @@ namespace UCanAccess;
 ///   Column Order                           -- "natural" (default) or "display"
 ///   Lazy Load                              -- load linked tables on demand (default true)
 ///   Keep Mirror                            -- keep the SQLite mirror cached (default true)
+///   Memory                                 -- upstream alias; false selects a file-backed mirror
+///   Immediately Release Resources          -- upstream one-shot connection mode
+///   Prevent Reloading                       -- do not reopen a changed file during this connection
 ///   Mirror Mode                            -- "memory" (default) or "file"
 ///   Mirror Path                            -- SQLite file used by file mode
 ///   Mirror Folder                          -- folder for an automatically named file mirror
@@ -45,6 +48,15 @@ public sealed class UCanAccessConnectionString
         ["lazyload"] = "lazyload",
         ["keep mirror"] = "keepmirror",
         ["keepmirror"] = "keepmirror",
+        ["memory"] = "memory",
+        ["immediately release resources"] = "immediatelyreleaseresources",
+        ["immediatelyreleaseresources"] = "immediatelyreleaseresources",
+        ["single connection"] = "immediatelyreleaseresources",
+        ["singleconnection"] = "immediatelyreleaseresources",
+        ["prevent reloading"] = "preventreloading",
+        ["preventreloading"] = "preventreloading",
+        ["sys schema"] = "sysschema",
+        ["sysschema"] = "sysschema",
         ["mirror mode"] = "mirrormode",
         ["mirrormode"] = "mirrormode",
         ["mirror path"] = "mirrorpath",
@@ -101,7 +113,11 @@ public sealed class UCanAccessConnectionString
 
     /// <summary>expose system objects (MSys*) when true; default false</summary>
     public bool ShowSchema
-        => GetBoolean("showschema", defaultValue: false);
+        => GetBoolean("showschema", defaultValue: false) || GetBoolean("sysschema", defaultValue: false);
+
+    /// <summary>whether the upstream <c>sysSchema</c> alias was enabled</summary>
+    public bool SysSchema
+        => GetBoolean("sysschema", defaultValue: false);
 
     /// <summary>whether linked databases outside the main database directory may be opened</summary>
     public bool AllowExternalLinks
@@ -113,17 +129,70 @@ public sealed class UCanAccessConnectionString
 
     /// <summary>whether the SQLite mirror is retained for the connection lifetime</summary>
     public bool KeepMirror
-        => GetBoolean("keepmirror", defaultValue: true);
+    {
+        get
+        {
+            if (ImmediatelyReleaseResources)
+            {
+                return false;
+            }
+            if (!_values.TryGetValue("keepmirror", out string? value) || value.Trim().Length == 0)
+            {
+                return true;
+            }
+            return IsBoolean(value) ? ParseBoolean(value, "keepmirror") : true;
+        }
+    }
+
+    /// <summary>
+    /// Releases the provider-owned mirror as soon as the last operation ends.
+    /// This is the UCanAccess <c>immediatelyReleaseResources</c>/<c>singleConnection</c>
+    /// compatibility mode for one-shot jobs.
+    /// </summary>
+    public bool ImmediatelyReleaseResources
+        => GetBoolean("immediatelyreleaseresources", defaultValue: false);
+
+    /// <summary>
+    /// Prevents automatic reopening when another process changes the Access file.
+    /// </summary>
+    public bool PreventReloading
+        => GetBoolean("preventreloading", defaultValue: false);
+
+    /// <summary>
+    /// The upstream-compatible persistent mirror path supplied through
+    /// <c>keepMirror=&lt;path&gt;</c>. Boolean Keep Mirror values retain their
+    /// established provider meaning.
+    /// </summary>
+    public string? PersistentMirrorPath
+        => _values.TryGetValue("keepmirror", out string? value) && !string.IsNullOrWhiteSpace(value)
+            && !IsBoolean(value) ? value.Trim() : null;
 
     /// <summary>SQLite mirror storage mode: memory (default) or file.</summary>
     public string MirrorMode
-        => _values.TryGetValue("mirrormode", out string? value) && value.Trim().Length > 0
-            ? value.Trim()
-            : "memory";
+    {
+        get
+        {
+            if (_values.TryGetValue("mirrormode", out string? value) && value.Trim().Length > 0)
+            {
+                return value.Trim();
+            }
+            if (_values.TryGetValue("memory", out string? memory) && memory.Trim().Length > 0)
+            {
+                return ParseBoolean(memory, "memory") ? "memory" : "file";
+            }
+            return PersistentMirrorPath != null ? "file" : "memory";
+        }
+    }
+
+    /// <summary>whether the effective SQLite mirror mode is in-memory</summary>
+    public bool Memory
+        => MirrorMode.Equals("memory", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>explicit SQLite mirror path used when <see cref="MirrorMode"/> is file</summary>
     public string? MirrorPath
-        => _values.TryGetValue("mirrorpath", out string? value) && value.Length > 0 ? value : null;
+        => _values.TryGetValue("mirrorpath", out string? value) && value.Length > 0
+            ? value
+            : PersistentMirrorPath;
 
     /// <summary>folder for an automatically named file mirror</summary>
     public string? MirrorFolder
@@ -177,13 +246,19 @@ public sealed class UCanAccessConnectionString
             return defaultValue;
         }
 
-        return value.Trim().ToLowerInvariant() switch
+        return ParseBoolean(value, key);
+    }
+
+    private static bool IsBoolean(string value)
+        => value.Trim().ToLowerInvariant() is "true" or "yes" or "1" or "false" or "no" or "0";
+
+    private static bool ParseBoolean(string value, string key)
+        => value.Trim().ToLowerInvariant() switch
         {
             "true" or "yes" or "1" => true,
             "false" or "no" or "0" => false,
             _ => throw new ArgumentException($"Invalid boolean value '{value}' for '{key}'."),
         };
-    }
 
     private static string Unquote(string value)
     {

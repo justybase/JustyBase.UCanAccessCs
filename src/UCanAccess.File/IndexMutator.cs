@@ -10,6 +10,10 @@ internal static class IndexMutator
     internal static void AddIndex(Database database, Table table, IndexBuilder builder)
     {
         ValidateIndexBuilder(table, builder);
+        if (builder.PrimaryKey && table.Indexes.Any(index => index.IsPrimaryKey))
+        {
+            throw new InvalidOperationException($"Table '{table.Name}' already has a primary key.");
+        }
         if (table.Indexes.Any(index => string.Equals(index.Name, builder.Name,
                 StringComparison.OrdinalIgnoreCase)))
         {

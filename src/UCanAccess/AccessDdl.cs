@@ -17,15 +17,26 @@ namespace UCanAccess;
 ///   DROP VIEW name
 ///   ALTER TABLE name ADD COLUMN col type
 ///   ALTER TABLE name DROP COLUMN col
+///   ALTER TABLE name RENAME TO new_name
 /// </summary>
 public static class AccessDdl
 {
     internal static bool IsIndexMutation(string sql)
     {
         List<Token> tokens = Tokenize(sql);
-        if (tokens.Count < 2
-            || (!tokens[0].Text.Equals("create", StringComparison.OrdinalIgnoreCase)
-                && !tokens[0].Text.Equals("drop", StringComparison.OrdinalIgnoreCase)))
+        if (tokens.Count < 2)
+        {
+            return false;
+        }
+        if (tokens[0].Text.Equals("alter", StringComparison.OrdinalIgnoreCase))
+        {
+            return tokens.Count > 3
+                && tokens[1].Text.Equals("table", StringComparison.OrdinalIgnoreCase)
+                && tokens[3].Text.Equals("add", StringComparison.OrdinalIgnoreCase)
+                && tokens.Any(token => token.Text.Equals("primary", StringComparison.OrdinalIgnoreCase));
+        }
+        if (!tokens[0].Text.Equals("create", StringComparison.OrdinalIgnoreCase)
+            && !tokens[0].Text.Equals("drop", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -36,6 +47,10 @@ public static class AccessDdl
     /// <summary>Executes the DDL statement; returns the number of rows affected (0 for DDL).</summary>
     public static int Execute(File.Database db, Mirror? mirror, string sql, bool dryRun = false)
     {
+        if (!dryRun && db.IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
         List<Token> tokens = Tokenize(sql);
         while (tokens.Count > 0 && tokens[^1].Text == ";")
         {
@@ -701,6 +716,22 @@ public static class AccessDdl
         switch (action)
         {
             case "ADD":
+                if (PeekWord(tokens, pos, "primary"))
+                {
+                    AddPrimaryKey(db, tableName, "PrimaryKey", tokens, ref pos, dryRun);
+                    break;
+                }
+                if (PeekWord(tokens, pos, "constraint"))
+                {
+                    pos++;
+                    string constraintName = ReadName(tokens, ref pos);
+                    if (PeekWord(tokens, pos, "primary"))
+                    {
+                        AddPrimaryKey(db, tableName, constraintName, tokens, ref pos, dryRun);
+                        break;
+                    }
+                    throw new NotSupportedException("ALTER TABLE ADD CONSTRAINT currently supports PRIMARY KEY only.");
+                }
                 ExpectWord(tokens, ref pos, "column");
                 {
                     string colName = ReadName(tokens, ref pos);
@@ -728,6 +759,16 @@ public static class AccessDdl
                 }
                 break;
             case "DROP":
+                if (PeekWord(tokens, pos, "primary"))
+                {
+                    throw new NotSupportedException(
+                        "ALTER TABLE DROP PRIMARY KEY is not supported by the UCanAccess 5.1.6 compatibility baseline.");
+                }
+                if (PeekWord(tokens, pos, "constraint"))
+                {
+                    throw new NotSupportedException(
+                        "ALTER TABLE DROP CONSTRAINT is not supported by the UCanAccess 5.1.6 compatibility baseline.");
+                }
                 ExpectWord(tokens, ref pos, "column");
                 {
                     string colName = ReadName(tokens, ref pos);
@@ -746,8 +787,43 @@ public static class AccessDdl
                     db.RemoveColumn(tableName, colName);
                 }
                 break;
+            case "RENAME":
+                ExpectWord(tokens, ref pos, "to");
+                {
+                    string newName = ReadName(tokens, ref pos);
+                    EnsureEnd(tokens, pos);
+                    if (!dryRun)
+                    {
+                        db.RenameTable(tableName, newName);
+                    }
+                }
+                break;
             default:
                 throw new NotSupportedException($"ALTER TABLE ... {action} is not supported.");
+        }
+    }
+
+    private static void AddPrimaryKey(File.Database db, string tableName, string indexName,
+        List<Token> tokens, ref int pos, bool dryRun)
+    {
+        ExpectWord(tokens, ref pos, "primary");
+        ExpectWord(tokens, ref pos, "key");
+        ExpectSymbol(tokens, ref pos, "(");
+        var index = new IndexBuilder(indexName).WithPrimaryKey();
+        while (true)
+        {
+            index.WithColumns(ReadName(tokens, ref pos));
+            if (Peek(tokens, pos) is not { Text: "," })
+            {
+                break;
+            }
+            pos++;
+        }
+        ExpectSymbol(tokens, ref pos, ")");
+        EnsureEnd(tokens, pos);
+        if (!dryRun)
+        {
+            db.AddIndex(tableName, index);
         }
     }
 

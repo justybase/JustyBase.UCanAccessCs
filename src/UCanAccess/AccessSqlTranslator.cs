@@ -109,7 +109,7 @@ public static class AccessSqlTranslator
                 topN = work[i + 1].Text;
                 if (i + 2 < work.Count && work[i + 2].Text.Equals("percent", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new NotSupportedException("TOP ... PERCENT is not supported yet.");
+                    throw new NotSupportedException("TOP ... PERCENT is not supported by the UCanAccess 5.1.6 compatibility baseline.");
                 }
                 work.RemoveRange(i, 2);
             }

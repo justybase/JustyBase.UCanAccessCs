@@ -17,7 +17,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | Access 2010/2016 `.accdb` read/write | ✅ | Verified with bundled fixtures. |
 | Calculated-column values | 🟡 | Values can be read; table recreation/DDL on calculated tables is rejected. |
 | Complex types, attachments, multi-value fields | 🟡 | Existing Access fields are exposed as typed CLR arrays and can be written through their flat child tables; creating a new complex field remains unsupported. |
-| Password-encrypted databases | 🟡 | Password is accepted and routed to an `IAccessDatabaseOpener`; the core package intentionally does not ship an Access encryption codec. |
+| Password-encrypted databases | 🟡 | Optional `JustyBase.UCanAccess.AccessCrypto` opens and writes modern Agile-encrypted `.accdb` files; the core package remains codec-free. Legacy `.mdb` encryption and unsupported Access profiles remain rejected. |
 
 ## SQL
 
@@ -26,7 +26,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | SELECT, filtering, grouping, HAVING, ordering | ✅ | Executed through the SQLite mirror with Access rewrites. |
 | INNER/LEFT/RIGHT/FULL JOIN | ✅ | Covered by the SQL parity corpus where supported by SQLite translation. |
 | Subqueries, UNION/EXCEPT/INTERSECT, CTE | ✅ | SELECT and correlated DML subqueries are evaluated by the SQLite mirror. |
-| DISTINCT, DISTINCTROW, TOP n | ✅ | `TOP n PERCENT` is rejected explicitly. |
+| DISTINCT, DISTINCTROW, TOP n | ✅ | `TOP n PERCENT` is rejected to match UCanAccess 5.1.6. |
 | Window functions | ✅ | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, partitions, ordering, and SQLite window frames are preserved by the translator. |
 | TRANSFORM/PIVOT crosstab queries | 🟡 | Explicit `IN (...)` and inline dynamic pivots are supported; saved dynamic pivots with parameters remain limited. |
 | Linked tables in queries | ✅ | Targets are resolved and mirrored under the link name. |
@@ -43,12 +43,12 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | INSERT, multi-row INSERT, INSERT…SELECT | ✅ | Includes parameters and supported type coercion. |
 | UPDATE and DELETE | ✅ | Includes translated expressions, correlated subqueries, UPDATE/DELETE JOIN, foreign-key checks, and long values. |
 | DML NULL semantics | ✅ | WHERE selection follows SQL three-valued logic; UNKNOWN never selects a row. |
-| Generated AutoNumber | ✅ | Numeric AutoNumber from the latest successful INSERT is exposed through `LastInsertedId`. |
+| Generated AutoNumber / `@@IDENTITY` | ✅ | Numeric AutoNumber from the latest successful INSERT is exposed through `LastInsertedId` and `SELECT @@IDENTITY`. |
 | Positional/named parameters | ✅ | `?`, `@name`, `:name`, `$name`, and declared `PARAMETERS` references. |
 | CREATE TABLE | ✅ | Supported Access types, indexes, and column-level `NOT NULL` are written to the file property map. |
 | CREATE TABLE AS SELECT | ✅ | `WITH DATA` copies rows; `WITH NO DATA` copies the inferred scalar schema. |
 | DROP TABLE | ✅ | Deallocates data, index, table-definition, and referenced long-value pages. |
-| ALTER ADD/DROP COLUMN | 🟡 | Implemented by safe table recreation which preserves supported column properties; autonumber, calculated, and relationship-bearing tables are rejected. `ADD ... NOT NULL` is rejected for non-empty tables without a default. |
+| ALTER ADD/DROP COLUMN, RENAME, ADD PRIMARY KEY | 🟡 | `ADD/DROP COLUMN` uses safe table recreation; `RENAME TO` updates catalog relationship references; `ADD [CONSTRAINT] PRIMARY KEY` mutates the index definition atomically. `DROP PRIMARY KEY` and `DROP CONSTRAINT` are rejected to match UCanAccess 5.1.6. Autonumber, calculated, relationship-bearing table recreation and foreign-key DDL remain limited. `ADD ... NOT NULL` is rejected for non-empty tables without a default. |
 | CREATE/DROP INDEX | ✅ | Uses a same-directory staging copy and mutates only index/table-definition pages; row pages, row locations, data, and retained B-trees are preserved. Relationship/shared indexes remain limited. |
 | CREATE/DROP VIEW | ❌ | Saved SELECT queries are exposed as read-only mirror views; creating new saved queries is not implemented. |
 | Commit/rollback transactions | ✅ | Writes are applied to a staged file copy and installed atomically. Native linked-table transactions are rejected. Autocommit DML uses the same safety boundary. |
@@ -72,10 +72,13 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 |---|---:|---|
 | `Read Only` | ✅ | Defaults to `true`. |
 | `Encoding` / `Code Page` | ✅ | Relevant mainly to Jet 3 text. |
-| `Show Schema` | ✅ | Controls exposure of system objects. |
+| `Show Schema` / `Sys Schema` | ✅ | Controls exposure of system objects; `Sys Schema` is an upstream alias. |
 | `Column Order=natural|display` | ✅ | Selects file or Access display order. |
 | `Lazy Load` | ✅ | Controls whether the mirror is built during `Open`. |
-| `Keep Mirror` | ✅ | `false` uses a per-operation mirror; transactions keep their staged mirror. |
+| `Keep Mirror` | ✅ | `false` uses a per-operation mirror; a non-boolean path selects a persistent file mirror. Transactions keep their staged mirror. |
+| `Memory` | ✅ | Upstream alias for `Mirror Mode=memory|file`. |
+| `Immediately Release Resources` / `Single Connection` | ✅ | One-shot mode that releases the provider-owned mirror after each operation. |
+| `Prevent Reloading` | ✅ | Suppresses change detection/reopen during the current connection. |
 | `Mirror Mode=memory|file` | ✅ | File mode uses a provider-owned SQLite file and avoids keeping all mirror pages only in process memory. |
 | `Mirror Path` / `Mirror Folder` | ✅ | Selects an explicit file mirror or its containing folder. |
 | `Allow External Links` | ✅ | Disabled by default to prevent link-path escape. |

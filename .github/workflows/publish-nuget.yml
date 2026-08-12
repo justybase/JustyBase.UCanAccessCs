@@ -67,6 +67,7 @@ jobs:
         run: |
           dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
           dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
+          dotnet pack src/UCanAccess.AccessCrypto/UCanAccess.AccessCrypto.csproj -c Release --no-build --no-restore -p:Version=${{ steps.version.outputs.version }} --output artifacts/packages
 
       - name: NuGet login (OIDC)
         uses: NuGet/login@v1
@@ -82,7 +83,7 @@ jobs:
           test -n "$NUGET_API_KEY" || { echo "NuGet OIDC login did not return an API key" >&2; exit 1; }
           shopt -s nullglob
           packages=(artifacts/packages/*.nupkg)
-          test "${#packages[@]}" -eq 2 || { echo "Expected two packages, found ${#packages[@]}" >&2; exit 1; }
+          test "${#packages[@]}" -eq 3 || { echo "Expected three packages, found ${#packages[@]}" >&2; exit 1; }
           for package in "${packages[@]}"; do
             dotnet nuget push "$package" \
               --api-key "$NUGET_API_KEY" \

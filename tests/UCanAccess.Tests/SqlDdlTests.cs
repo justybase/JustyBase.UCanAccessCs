@@ -459,6 +459,84 @@ public class SqlDdlTests
     }
 
     [Fact]
+    public void Alter_table_rename_updates_the_catalog_and_preserves_rows()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE before_rename (id INTEGER PRIMARY KEY, value TEXT(20))");
+            Exec(conn, "INSERT INTO before_rename (id, value) VALUES (1, 'kept')");
+
+            Exec(conn, "ALTER TABLE before_rename RENAME TO after_rename");
+
+            Assert.Equal("kept", Scalar(conn, "SELECT value FROM after_rename WHERE id = 1"));
+            Assert.ThrowsAny<Exception>(() => Scalar(conn, "SELECT value FROM before_rename"));
+            Assert.Contains("after_rename", ((UCanAccessConnection)conn).AccessDatabase.GetTableNames());
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_table_add_primary_key_matches_the_upstream_ddl_boundary()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_add_pk (id LONG, value TEXT(20))");
+            Exec(conn, "INSERT INTO t_add_pk (id, value) VALUES (1, 'one')");
+            Exec(conn, "ALTER TABLE t_add_pk ADD CONSTRAINT pk_t_add_pk PRIMARY KEY (id)");
+
+            Assert.ThrowsAny<Exception>(() => Exec(conn,
+                "INSERT INTO t_add_pk (id, value) VALUES (1, 'duplicate')"));
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("t_add_pk"),
+                index => index.Name == "pk_t_add_pk" && index.PrimaryKey);
+
+            Assert.Throws<NotSupportedException>(() => Exec(conn,
+                "ALTER TABLE t_add_pk DROP CONSTRAINT pk_t_add_pk"));
+            Assert.Throws<NotSupportedException>(() => Exec(conn,
+                "ALTER TABLE t_add_pk DROP PRIMARY KEY"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_table_add_primary_key_rejects_a_readonly_connection_before_staging()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var writable = OpenWritable(tmp))
+            {
+                Exec(writable, "CREATE TABLE t_readonly_pk (id LONG, value TEXT(20))");
+            }
+            byte[] before = System.IO.File.ReadAllBytes(tmp);
+
+            using (var readonlyConnection = new UCanAccessConnection($"Data Source={tmp};Read Only=true"))
+            {
+                readonlyConnection.Open();
+                using var command = readonlyConnection.CreateCommand();
+                command.CommandText =
+                    "ALTER TABLE t_readonly_pk ADD CONSTRAINT pk_t_readonly_pk PRIMARY KEY (id)";
+                Assert.Throws<UCanAccess.File.DatabaseException>(() => command.ExecuteNonQuery());
+            }
+
+            Assert.Equal(before, System.IO.File.ReadAllBytes(tmp));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Jackcess_reads_file_after_alter_column()
     {
         if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
