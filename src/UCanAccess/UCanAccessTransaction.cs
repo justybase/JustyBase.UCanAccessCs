@@ -84,7 +84,8 @@ public sealed class UCanAccessTransaction : DbTransaction
         {
             EnsureStage();
             string kind = FirstWord(sql);
-            if (kind is "CREATE" or "DROP" or "ALTER")
+            if (kind is "CREATE" or "DROP" or "ALTER"
+                || (kind == "SELECT" && AccessDdl.IsSelectInto(sql)))
             {
                 return AccessDdl.Execute(_stagedDatabase!, _stagedMirror!, sql, false);
             }

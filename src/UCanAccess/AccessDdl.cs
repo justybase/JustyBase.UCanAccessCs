@@ -11,6 +11,7 @@ namespace UCanAccess;
 ///   CREATE TABLE name (col type [NOT NULL] [, ...] [, PRIMARY KEY (cols)] [, UNIQUE (cols)]
 ///       [, CONSTRAINT name FOREIGN KEY (cols) REFERENCES table (cols)])
 ///   CREATE TABLE name AS SELECT ... [WITH DATA|WITH NO DATA]
+///   SELECT ... INTO name FROM ... (table-creating query)
 ///   CREATE INDEX name ON table (col [ASC|DESC], ...) [WITH PRIMARY|UNIQUE|DISALLOW NULL|IGNORE NULL]
 ///   CREATE VIEW name AS SELECT ...
 ///   DROP TABLE name
@@ -54,11 +55,47 @@ public static class AccessDdl
     /// </summary>
     internal static bool RequiresAtomicFileMutation(string sql)
     {
-        List<Token> tokens = Tokenize(sql);
-        return tokens.Count > 0
-            && (tokens[0].Text.Equals("create", StringComparison.OrdinalIgnoreCase)
-                || tokens[0].Text.Equals("drop", StringComparison.OrdinalIgnoreCase)
-                || tokens[0].Text.Equals("alter", StringComparison.OrdinalIgnoreCase));
+        List<Token> tokens = Tokenize(AccessSqlTranslator.Preprocess(sql));
+        if (tokens.Count == 0)
+        {
+            return false;
+        }
+        return tokens[0].Text.Equals("create", StringComparison.OrdinalIgnoreCase)
+            || tokens[0].Text.Equals("drop", StringComparison.OrdinalIgnoreCase)
+            || tokens[0].Text.Equals("alter", StringComparison.OrdinalIgnoreCase)
+            || IsSelectInto(sql);
+    }
+
+    /// <summary>
+    /// Whether the statement is an Access table-creating query
+    /// (<c>SELECT ... INTO newtable FROM ...</c>).
+    /// </summary>
+    public static bool IsSelectInto(string sql)
+    {
+        List<Token> tokens = Tokenize(AccessSqlTranslator.Preprocess(sql));
+        if (tokens.Count < 2 || !tokens[0].Text.Equals("select", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        int depth = 0;
+        for (int i = 1; i < tokens.Count; i++)
+        {
+            Token t = tokens[i];
+            if (t.Text == "(")
+            {
+                depth++;
+            }
+            else if (t.Text == ")")
+            {
+                depth--;
+            }
+            else if (depth == 0 && t.Kind is Kind.Word or Kind.Ident
+                     && t.Text.Equals("into", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Executes the DDL statement; returns the number of rows affected (0 for DDL).</summary>
@@ -95,6 +132,14 @@ public static class AccessDdl
                 break;
             case "ALTER":
                 affected = ExecuteAlter(db, tokens, dryRun);
+                break;
+            case "SELECT":
+                if (mirror == null)
+                {
+                    throw new InvalidOperationException("SELECT INTO requires an active SQL mirror.");
+                }
+                ExecuteSelectInto(db, mirror, tokens, dryRun);
+                affected = 0;
                 break;
             default:
                 throw new NotSupportedException($"Statement type '{kind}' is not supported for DDL.");
@@ -450,6 +495,53 @@ public static class AccessDdl
         {
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
+    }
+
+    /// <summary>
+    /// Executes the Access table-creating query <c>SELECT cols INTO name FROM ...</c>.
+    /// The projection and FROM body are rewritten to <c>SELECT cols FROM ...</c> and
+    /// executed through the same schema-and-data inference as <c>CREATE TABLE ... AS</c>.
+    /// </summary>
+    private static void ExecuteSelectInto(File.Database db, Mirror mirror, List<Token> tokens, bool dryRun)
+    {
+        int intoPos = -1;
+        int depth = 0;
+        for (int i = 1; i < tokens.Count; i++)
+        {
+            Token t = tokens[i];
+            if (t.Text == "(")
+            {
+                depth++;
+            }
+            else if (t.Text == ")")
+            {
+                depth--;
+            }
+            else if (depth == 0 && t.Kind is Kind.Word or Kind.Ident
+                     && t.Text.Equals("into", StringComparison.OrdinalIgnoreCase))
+            {
+                intoPos = i;
+                break;
+            }
+        }
+        if (intoPos < 0)
+        {
+            throw new NotSupportedException("SELECT INTO requires an INTO clause.");
+        }
+
+        int fromPos = intoPos + 1;
+        string tableName = ReadName(tokens, ref fromPos);
+        if (fromPos >= tokens.Count || !PeekWord(tokens, fromPos, "from"))
+        {
+            throw new NotSupportedException("SELECT INTO requires a FROM clause.");
+        }
+
+        // Rewrite "SELECT a, b INTO t FROM ..." to "SELECT a, b FROM ...".
+        var selectTokens = new List<Token>(tokens.Count - 2);
+        selectTokens.Add(tokens[0]);
+        selectTokens.AddRange(tokens.GetRange(1, intoPos - 1));
+        selectTokens.AddRange(tokens.GetRange(fromPos, tokens.Count - fromPos));
+        CreateTableAsSelect(db, mirror, tableName, selectTokens, 0, dryRun);
     }
 
     private static string UniqueColumnName(string name, List<string> existing)

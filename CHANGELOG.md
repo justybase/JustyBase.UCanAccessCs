@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added Access `SELECT ... INTO` table-creating queries (atomic with the
+  existing CTAS path; a port extension, the Java original rejects the grammar).
 - Added Access SQL compatibility for `SELECT @@IDENTITY`, `ALTER TABLE ...
   RENAME TO`, and adding a primary-key index with `ALTER TABLE`.
 - Added upstream-compatible connection-string aliases for persistent

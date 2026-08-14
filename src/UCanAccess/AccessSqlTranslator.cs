@@ -244,6 +244,15 @@ public static class AccessSqlTranslator
     }
 
     /// <summary>
+    /// Normalizes parameter syntax that the Access lexer cannot tokenize directly,
+    /// discarding the collected parameter names.
+    /// </summary>
+    internal static string Preprocess(string sql)
+    {
+        return Preprocess(sql, out _);
+    }
+
+    /// <summary>
     /// Normalizes parameter syntax that the Access lexer cannot tokenize directly:
     /// strips a leading <c>PARAMETERS ...;</c> clause (turning bracketed parameter
     /// references into '?'), converts '@name' and ':name' into '?', and removes a

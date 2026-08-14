@@ -201,7 +201,8 @@ public sealed class UCanAccessCommand : DbCommand
 
             return connection.ExecuteDmlAtomically(sql, parameters);
         }
-        if (kind is "CREATE" or "DROP" or "ALTER")
+        if (kind is "CREATE" or "DROP" or "ALTER"
+            || (kind == "SELECT" && AccessDdl.IsSelectInto(sql)))
         {
             UCanAccessTransaction? transaction = GetTransaction(connection);
             if (transaction != null)
@@ -520,7 +521,6 @@ public sealed class UCanAccessCommand : DbCommand
         {
             throw new InvalidOperationException("The connection is not open.");
         }
-
         Mirror? transientMirror = null;
         bool readerHandedOff = false;
         try
@@ -531,7 +531,12 @@ public sealed class UCanAccessCommand : DbCommand
                 ? connection.Mirror
                 : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase));
         _activeMirror = queryMirror;
-        string effectiveCommandText = RewriteIdentitySelect(CommandText, connection.LastInsertedId);
+        string effectiveCommandText = RewriteIdentitySelect(CommandText ?? string.Empty, connection.LastInsertedId);
+        if (AccessDdl.IsSelectInto(effectiveCommandText))
+        {
+            throw new InvalidOperationException(
+                "SELECT INTO is a table-creating write statement; use ExecuteNonQuery instead.");
+        }
         effectiveCommandText = SavedQueryExpander.Expand(effectiveCommandText,
             transaction?.QueryDatabase ?? connection.AccessDatabase);
         var suppliedParameters = _parameters.Cast<UCanAccessParameter>().ToList();

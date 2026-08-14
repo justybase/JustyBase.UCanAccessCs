@@ -47,6 +47,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | Positional/named parameters | ✅ | `?`, `@name`, `:name`, `$name`, and declared `PARAMETERS` references. |
 | CREATE TABLE | ✅ | Supported Access types, named PK/UNIQUE/FK constraints, and column-level `NOT NULL`/`DEFAULT` are written to the file property map. |
 | CREATE TABLE AS SELECT | ✅ | `WITH DATA` copies rows; `WITH NO DATA` copies the inferred scalar schema. |
+| SELECT ... INTO (table-creating query) | ✅ | Rewritten to an atomic table creation with copied rows. A port extension: Java UCanAccess 5.1.6 rejects the Access `INTO` grammar. |
 | DROP TABLE | ✅ | Deallocates data, index, table-definition, and referenced long-value pages. |
 | ALTER ADD/DROP COLUMN, RENAME, ADD PRIMARY KEY, FOREIGN KEY | 🟡 | Nullable `ADD COLUMN` can extend the table definition without rewriting rows; rebuilds preserve AutoNumber values/counters. Defaults are stored in the Access property map and backfill required columns. Named PK/UNIQUE constraints and `ADD/DROP CONSTRAINT` for foreign keys are supported with cascade enforcement. Calculated/complex table rebuilds remain limited. `DROP PRIMARY KEY` remains rejected to match UCanAccess 5.1.6. |
 | CREATE/DROP INDEX | ✅ | Uses a same-directory staging copy and mutates only index/table-definition pages; row pages, row locations, data, and retained B-trees are preserved. Relationship/shared indexes remain limited. |

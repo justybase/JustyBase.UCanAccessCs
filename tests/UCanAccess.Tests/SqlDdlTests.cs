@@ -112,6 +112,122 @@ public class SqlDdlTests
     }
 
     [Fact]
+    public void Select_into_creates_table_with_schema_and_data()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "SELECT id, name, budget INTO t_si FROM t_master WHERE id <= 2");
+
+                Assert.Equal(2L, Scalar(conn, "SELECT count(*) FROM t_si"));
+                Assert.Equal("Alpha", Scalar(conn, "SELECT name FROM t_si WHERE id = 1"));
+                Assert.Equal(3, conn.GetSchema("Columns", new string?[] { null, null, "t_si", null }).Rows.Count);
+                Assert.NotNull(((UCanAccessConnection)conn).AccessDatabase.GetTable("t_si"));
+            }
+
+            using var conn2 = OpenWritable(tmp);
+            Assert.Equal(2L, Scalar(conn2, "SELECT count(*) FROM t_si"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_star_into_creates_table_with_all_columns()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "SELECT * INTO t_si_star FROM t_master WHERE id = 1");
+            Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_si_star"));
+            Assert.Equal("Alpha", Scalar(conn, "SELECT name FROM t_si_star WHERE id = 1"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_into_rejects_existing_table_and_missing_from()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Assert.ThrowsAny<Exception>(() => Exec(conn, "SELECT id INTO t_master FROM t_master WHERE 1=0"));
+            Assert.ThrowsAny<Exception>(() => Exec(conn, "SELECT id INTO t_no_from"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_into_via_ExecuteScalar_or_Reader_is_rejected()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT id INTO t_si_reader FROM t_master";
+                Assert.Throws<InvalidOperationException>(() => cmd.ExecuteReader());
+            }
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT id INTO t_si_scalar FROM t_master";
+                Assert.Throws<InvalidOperationException>(() => cmd.ExecuteScalar());
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_into_within_transaction_commits_and_rolls_back()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var tx = conn.BeginTransaction())
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = "SELECT id, name INTO t_si_tx FROM t_master WHERE id = 1";
+                cmd.ExecuteNonQuery();
+                Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_si_tx"));
+                tx.Rollback();
+            }
+            Assert.ThrowsAny<Exception>(() => Scalar(conn, "SELECT count(*) FROM t_si_tx"));
+
+            using (var tx = conn.BeginTransaction())
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = "SELECT id INTO t_si_tx2 FROM t_master WHERE id = 2";
+                cmd.ExecuteNonQuery();
+                tx.Commit();
+            }
+            Assert.Equal(1L, Scalar(conn, "SELECT count(*) FROM t_si_tx2"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Create_table_not_null_is_enforced_and_reported_in_schema()
     {
         string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));

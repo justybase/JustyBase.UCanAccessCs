@@ -29,6 +29,7 @@ misleading name.
 | INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases | Add larger Java behavioral oracle for DML |
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
+| `SELECT ... INTO` | Supported (port extension) | `SqlDdlTests.Select_into_*` incl. transaction commit/rollback and reader rejection | Documented as extension: Java UCanAccess 5.1.6 rejects the Access `INTO` grammar |
 | `ALTER TABLE` | Partial | AutoNumber-preserving add/drop tests, default backfill, rename, add-primary-key and foreign-key cascade tests | Add calculated/complex table mutation cases and broader oracle grammar coverage |
 | `CREATE/DROP INDEX` | Supported | Index mutation tests | Add shared relationship index cases |
 | `CREATE/DROP VIEW` | Partial | Managed SELECT QueryDef writer, catalog round-trip, JOIN and parameter expansion tests | Broaden saved-query grammar (FULL JOIN/crosstab); action QueryDefs remain out of scope |
