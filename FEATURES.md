@@ -45,12 +45,12 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | DML NULL semantics | ✅ | WHERE selection follows SQL three-valued logic; UNKNOWN never selects a row. |
 | Generated AutoNumber / `@@IDENTITY` | ✅ | Numeric AutoNumber from the latest successful INSERT is exposed through `LastInsertedId` and `SELECT @@IDENTITY`. |
 | Positional/named parameters | ✅ | `?`, `@name`, `:name`, `$name`, and declared `PARAMETERS` references. |
-| CREATE TABLE | ✅ | Supported Access types, indexes, and column-level `NOT NULL` are written to the file property map. |
+| CREATE TABLE | ✅ | Supported Access types, named PK/UNIQUE/FK constraints, and column-level `NOT NULL`/`DEFAULT` are written to the file property map. |
 | CREATE TABLE AS SELECT | ✅ | `WITH DATA` copies rows; `WITH NO DATA` copies the inferred scalar schema. |
 | DROP TABLE | ✅ | Deallocates data, index, table-definition, and referenced long-value pages. |
-| ALTER ADD/DROP COLUMN, RENAME, ADD PRIMARY KEY | 🟡 | `ADD/DROP COLUMN` uses safe table recreation; `RENAME TO` updates catalog relationship references; `ADD [CONSTRAINT] PRIMARY KEY` mutates the index definition atomically. `DROP PRIMARY KEY` and `DROP CONSTRAINT` are rejected to match UCanAccess 5.1.6. Autonumber, calculated, relationship-bearing table recreation and foreign-key DDL remain limited. `ADD ... NOT NULL` is rejected for non-empty tables without a default. |
+| ALTER ADD/DROP COLUMN, RENAME, ADD PRIMARY KEY, FOREIGN KEY | 🟡 | Nullable `ADD COLUMN` can extend the table definition without rewriting rows; rebuilds preserve AutoNumber values/counters. Defaults are stored in the Access property map and backfill required columns. Named PK/UNIQUE constraints and `ADD/DROP CONSTRAINT` for foreign keys are supported with cascade enforcement. Calculated/complex table rebuilds remain limited. `DROP PRIMARY KEY` remains rejected to match UCanAccess 5.1.6. |
 | CREATE/DROP INDEX | ✅ | Uses a same-directory staging copy and mutates only index/table-definition pages; row pages, row locations, data, and retained B-trees are preserved. Relationship/shared indexes remain limited. |
-| CREATE/DROP VIEW | ❌ | Saved SELECT queries are exposed as read-only mirror views; creating new saved queries is not implemented. |
+| CREATE/DROP VIEW | 🟡 | Saved SELECT QueryDefs can be created, listed, reopened, dropped and queried; parameterized definitions are expanded at execution. Action QueryDefs and unsupported saved-query grammar remain rejected. |
 | Commit/rollback transactions | ✅ | Writes are applied to a staged file copy and installed atomically. Native linked-table transactions are rejected. Autocommit DML uses the same safety boundary. |
 | Transaction savepoints | ✅ | `DbTransaction.Save` and rollback-to-savepoint use private staging snapshots. |
 | DML through linked tables | ✅ | Direct DML can reach the link target; atomic transactions containing native links are not supported. |
@@ -62,7 +62,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | DbConnection/DbCommand/DbDataReader | ✅ | Includes scalar queries, batched DML staging, cancellation, command timeout, and disposal. |
 | DbParameter/parameter collection | ✅ | Case-insensitive named lookup and input parameters. |
 | DbTransaction | ✅ | One active transaction per connection; rollback on close/dispose. |
-| GetSchema tables/columns/indexes/keys/views | 🟡 | Core collections and restrictions are implemented; foreign-key metadata is name-level. |
+| GetSchema tables/columns/indexes/keys/views | 🟡 | Core collections and restrictions are implemented; column defaults and DDL-created foreign keys are exposed through the schema/relationship metadata. |
 | Result-set type metadata | ✅ | Boolean, integer-width, decimal, date/time, GUID, and binary types are mapped back to CLR values. |
 | File locking | ✅ | Writable opens create the Access lock file and release it on disposal. |
 

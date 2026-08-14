@@ -35,7 +35,8 @@ Current focused compatibility tests outside the historical SQL corpus include:
 - `SELECT @@IDENTITY` after an Access AutoNumber insert;
 - `ALTER TABLE ... RENAME TO` plus relationship-catalog reference updates;
 - `ALTER TABLE ADD [CONSTRAINT] PRIMARY KEY` staged file mutation, with the
-  upstream-rejected `DROP PRIMARY KEY` and `DROP CONSTRAINT` forms rejected;
+  upstream-rejected `DROP PRIMARY KEY` form still rejected; managed foreign-key
+  constraint DDL is covered by provider-specific catalog and cascade tests;
 - `keepMirror=<path>`, `memory`, `immediatelyReleaseResources`,
   `preventReloading` and `sysSchema` mapping.
 
@@ -59,6 +60,7 @@ approval to alter provider expectations.
 The Java stack is JDBC/HSQLDB based whereas this provider is ADO.NET/SQLite
 mirror based. Connection pooling, updatable JDBC result sets and HSQLDB-specific
 configuration are therefore not copied as false-compatible options. Encrypted
-containers, saved-query write lifecycle and foreign-key DDL remain partial or
-unsupported until they receive their own format-level writer and differential
-fixtures.
+containers and saved-query write lifecycle remain partial or unsupported until
+they receive their own format-level writer and differential fixtures. Foreign-key
+DDL is supported for the managed provider's Access catalog writer, but remains a
+separate parity corpus because UCanAccess 5.1.6 rejects several ALTER forms.

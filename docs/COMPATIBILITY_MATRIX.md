@@ -29,10 +29,10 @@ misleading name.
 | INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases | Add larger Java behavioral oracle for DML |
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
-| `ALTER TABLE` | Partial | Safe recreation tests plus rename and add-primary-key mutation tests; upstream-rejected drop-constraint forms have explicit tests | Add foreign-key constraints and more table shapes |
+| `ALTER TABLE` | Partial | AutoNumber-preserving add/drop tests, default backfill, rename, add-primary-key and foreign-key cascade tests | Add calculated/complex table mutation cases and broader oracle grammar coverage |
 | `CREATE/DROP INDEX` | Supported | Index mutation tests | Add shared relationship index cases |
-| `CREATE/DROP VIEW` | Unsupported | Explicit rejection | Persist saved SELECT definitions |
-| Saved SELECT queries | Partial | Read-only mirror views | Add write lifecycle |
+| `CREATE/DROP VIEW` | Partial | Managed SELECT QueryDef writer, catalog round-trip, JOIN and parameter expansion tests | Broaden saved-query grammar (FULL JOIN/crosstab); action QueryDefs remain out of scope |
+| Saved SELECT queries | Supported (subset) | Read-only mirror views plus persisted managed QueryDefs; parameterized definitions are expanded per command | Add richer FULL JOIN/crosstab grammar |
 | Linked tables | Supported | Linked read/write tests; non-atomic direct fallback is explicit | Add remap and concurrency tests |
 | Access functions | Partial | Scalar/aggregate/domain registrations, EVAL/financial/statistical extensions and function tests | Generate a complete parity catalog |
 | User-defined scalar functions | Supported | `UCanAccessConnection.RegisterFunction` and function tests | Add an aggregate registration API if needed |

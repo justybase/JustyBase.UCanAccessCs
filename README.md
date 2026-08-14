@@ -114,8 +114,10 @@ silently changing the file. Known gaps include:
 - existing complex fields (multi-value, attachments) are exposed as typed
   arrays and their flat child rows can be written, but creating a new complex
   field through DDL is unsupported;
-- calculated-column and relationship-bearing table recreation, `CREATE/DROP
-  VIEW`, `TOP ... PERCENT`, and foreign-key DDL remain limited;
+- calculated-column and complex relationship-bearing table recreation, action
+  QueryDefs, unsupported saved-query grammar and `TOP ... PERCENT` remain
+  limited; managed SELECT `CREATE/DROP VIEW` with parameter expansion and
+  basic foreign-key DDL with cascade actions are supported;
 - explicit and inline dynamic crosstab queries are supported; parameterized
   saved dynamic crosstabs remain limited;
 - recognized `MONEY`/`NUMERIC` expressions use the exact-decimal mirror path,
@@ -143,6 +145,7 @@ operation.
 | [Parity baseline](docs/PARITY_BASELINE_UCANACCESS_5_1_6.md) | Pinned Java UCanAccess 5.1.6 reference and oracle-refresh rules. |
 | [SQL compatibility](docs/SQL_COMPATIBILITY.md) | Supported Access SQL syntax and translation. |
 | [Coverage](docs/COVERAGE.md) | Test coverage baselines and CI collection contract. |
+| [Performance](docs/PERFORMANCE.md) | Opt-in C#/Jackcess benchmark and profiling boundaries. |
 | [Security policy](SECURITY.md) | Supported versions and private vulnerability reporting. |
 | [Access encryption profile](docs/ACCESS_ENCRYPTION_PROFILE.md) | Pure-.NET encrypted ACCDB support, limits, and COM validation. |
 
