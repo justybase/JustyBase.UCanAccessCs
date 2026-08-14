@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added Access `DISABLE/ENABLE AUTOINCREMENT ON <table>` statements with
+  Java UCanAccess 5.1.6 parity: explicit AutoNumber values are honored only
+  while autoincrement is disabled, and `ENABLE` resumes at max+1. The flag is
+  per-connection in-memory state, like the upstream implementation. Known
+  divergences: a NULL AutoNumber insert while disabled raises a clean
+  `DatabaseException` (Java throws an NPE and poisons the connection), and the
+  flag applies to numeric AutoNumber columns only.
 - Added Access `SELECT ... INTO` table-creating queries (atomic with the
   existing CTAS path; a port extension, the Java original rejects the grammar).
 - Added Access SQL compatibility for `SELECT @@IDENTITY`, `ALTER TABLE ...

@@ -44,6 +44,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | UPDATE and DELETE | ✅ | Includes translated expressions, correlated subqueries, UPDATE/DELETE JOIN, foreign-key checks, and long values. |
 | DML NULL semantics | ✅ | WHERE selection follows SQL three-valued logic; UNKNOWN never selects a row. |
 | Generated AutoNumber / `@@IDENTITY` | ✅ | Numeric AutoNumber from the latest successful INSERT is exposed through `LastInsertedId` and `SELECT @@IDENTITY`. |
+| `DISABLE/ENABLE AUTOINCREMENT` | ✅ | `DISABLE AUTOINCREMENT ON t` honors explicit values; `ENABLE` resumes at max+1 — matching Java UCanAccess 5.1.6. The flag is per-connection in-memory state. Divergences: a NULL AutoNumber insert while disabled raises a clean `DatabaseException` (Java throws an NPE and poisons the connection), and GUID AutoNumber columns always auto-generate. |
 | Positional/named parameters | ✅ | `?`, `@name`, `:name`, `$name`, and declared `PARAMETERS` references. |
 | CREATE TABLE | ✅ | Supported Access types, named PK/UNIQUE/FK constraints, and column-level `NOT NULL`/`DEFAULT` are written to the file property map. |
 | CREATE TABLE AS SELECT | ✅ | `WITH DATA` copies rows; `WITH NO DATA` copies the inferred scalar schema. |

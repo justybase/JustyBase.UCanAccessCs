@@ -74,6 +74,7 @@ public sealed class Database : IDisposable
     private bool _enforceForeignKeys = true;
     private string? _path;
     private readonly Dictionary<string, Database> _linkedDatabaseByPath = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _allowAutoNumberInsert = new(StringComparer.OrdinalIgnoreCase);
     private FileStream? _lockStream;
     private string? _lockPath;
 
@@ -83,6 +84,19 @@ public sealed class Database : IDisposable
         get => _enforceForeignKeys;
         set => _enforceForeignKeys = value;
     }
+
+    /// <summary>
+    /// Whether the given table accepts explicit AutoNumber values on INSERT
+    /// (the DISABLE AUTOINCREMENT ON statement).  In-memory state only, mirroring
+    /// Jackcess <c>Table.setAllowAutoNumberInsert</c>; it is never written to the file.
+    /// </summary>
+    internal bool AllowAutoNumberInsert(string tableName)
+        => _allowAutoNumberInsert.TryGetValue(tableName, out bool allowed) && allowed;
+
+    internal void SetAllowAutoNumberInsert(string tableName, bool allowed)
+        => _allowAutoNumberInsert[tableName] = allowed;
+
+    internal IReadOnlyDictionary<string, bool> GetAllowAutoNumberInsertFlags() => _allowAutoNumberInsert;
 
     private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly,
         bool allowExternalLinks, IAccessPageCodec? codec = null)

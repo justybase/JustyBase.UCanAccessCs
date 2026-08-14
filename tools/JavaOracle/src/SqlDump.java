@@ -266,7 +266,7 @@ public class SqlDump {
         String word = sql.substring(0, end).toUpperCase(java.util.Locale.ROOT);
         return switch (word) {
             case "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-                "PARAMETERS", "TRANSFORM", "WITH", "SET" -> true;
+                "PARAMETERS", "TRANSFORM", "WITH", "SET", "DISABLE", "ENABLE" -> true;
             default -> false;
         };
     }

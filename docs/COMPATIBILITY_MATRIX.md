@@ -30,6 +30,7 @@ misleading name.
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
 | `SELECT ... INTO` | Supported (port extension) | `SqlDdlTests.Select_into_*` incl. transaction commit/rollback and reader rejection | Documented as extension: Java UCanAccess 5.1.6 rejects the Access `INTO` grammar |
+| `DISABLE/ENABLE AUTOINCREMENT ON t` | Supported | `SqlDdlTests.Disable_autoincrement_*` and `DdlParityTests.Disable_enable_autoincrement_produces_same_file_state_as_java` (identical file state as Java 5.1.6) | A NULL AutoNumber insert while disabled raises a clean `DatabaseException` instead of the Java NPE; the flag covers numeric AutoNumber columns only |
 | `ALTER TABLE` | Partial | AutoNumber-preserving add/drop tests, default backfill, rename, add-primary-key and foreign-key cascade tests | Add calculated/complex table mutation cases and broader oracle grammar coverage |
 | `CREATE/DROP INDEX` | Supported | Index mutation tests | Add shared relationship index cases |
 | `CREATE/DROP VIEW` | Partial | Managed SELECT QueryDef writer, catalog round-trip, JOIN and parameter expansion tests | Broaden saved-query grammar (FULL JOIN/crosstab); action QueryDefs remain out of scope |

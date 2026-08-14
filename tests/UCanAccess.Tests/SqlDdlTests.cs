@@ -1184,6 +1184,156 @@ public class SqlDdlTests
         return System.IO.File.Exists(c) ? c : null;
     }
 
+    [Fact]
+    public void Disable_autoincrement_honors_explicit_values_and_enable_resumes_after_max()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "DISABLE AUTOINCREMENT ON t_detail");
+            Exec(conn, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (500, 1, 7, 1.50, #1/1/2024#, 'explicit', 'x01')");
+            Assert.Equal(500L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'explicit'"));
+            Assert.Equal(500L, ((UCanAccessConnection)conn).LastInsertedId);
+
+            // explicit values below the counter do not lower it (Java parity)
+            Exec(conn, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (50, 1, 1, 0.50, #1/4/2024#, 'low', 'x04')");
+            Assert.Equal(50L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'low'"));
+
+            Exec(conn, "ENABLE AUTOINCREMENT ON t_detail");
+            Exec(conn, "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 8, 2.00, #1/2/2024#, 'after enable', 'x02')");
+            Assert.Equal(501L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'after enable'"));
+            Exec(conn, "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 9, 3.00, #1/3/2024#, 'after enable 2', 'x03')");
+            Assert.Equal(502L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'after enable 2'"));
+
+            if (JavaAvailable() && FindJar("jackcess-5.1.5.jar") != null
+                && Directory.Exists(Path.Combine(FindRepoRoot(), "tools", "JavaOracle", "classes")))
+            {
+                Assert.Contains("explicit", RunDbDump(tmp));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Enabled_autoincrement_ignores_explicit_values()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (1000, 1, 1, 0.50, #1/1/2024#, 'explicit while enabled', 'x04')");
+            Assert.Equal(13L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'explicit while enabled'"));
+            Assert.Equal(13L, ((UCanAccessConnection)conn).LastInsertedId);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Disable_autoincrement_with_null_value_is_rejected()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "DISABLE AUTOINCREMENT ON t_detail");
+            Assert.Throws<UCanAccess.File.DatabaseException>(() => Exec(conn,
+                "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 8, 2.00, #1/2/2024#, 'no id', 'x05')"));
+            Assert.Equal(12L, Scalar(conn, "SELECT count(*) FROM t_detail"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Disable_autoincrement_on_missing_table_fails()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Assert.Throws<UCanAccess.File.DatabaseException>(
+                () => Exec(conn, "DISABLE AUTOINCREMENT ON t_nonexistent"));
+            Assert.Throws<UCanAccess.File.DatabaseException>(
+                () => Exec(conn, "ENABLE AUTOINCREMENT ON t_nonexistent"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Disable_autoincrement_is_in_memory_only_and_resets_after_reopen()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "DISABLE AUTOINCREMENT ON t_detail");
+                Exec(conn, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (500, 1, 7, 1.50, #1/1/2024#, 'explicit', 'x01')");
+                Assert.Equal(500L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'explicit'"));
+            }
+            using (var reopened = OpenWritable(tmp))
+            {
+                // the toggle is not persisted: explicit values are ignored again,
+                // and the counter continues from the max value written above
+                Exec(reopened, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (600, 1, 1, 0.50, #1/1/2024#, 'explicit 2', 'x06')");
+                Assert.Equal(501L, Scalar(reopened, "SELECT id FROM t_detail WHERE note = 'explicit 2'"));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Disable_autoincrement_within_transaction_commits_explicit_values()
+    {
+        string tmp = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var tx = conn.BeginTransaction())
+            {
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandText = "DISABLE AUTOINCREMENT ON t_detail";
+                    cmd.ExecuteNonQuery();
+                }
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandText = "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (700, 1, 7, 1.50, #1/1/2024#, 'tx explicit', 'x07')";
+                    cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+            Assert.Equal(700L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'tx explicit'"));
+            // the toggle survives the commit for the session (Java parity)
+            Exec(conn, "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (701, 1, 2, 0.50, #1/1/2024#, 'after tx', 'x08')");
+            Assert.Equal(701L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'after tx'"));
+            Exec(conn, "ENABLE AUTOINCREMENT ON t_detail");
+            Exec(conn, "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 3, 1.00, #1/1/2024#, 'after enable tx', 'x09')");
+            Assert.Equal(702L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'after enable tx'"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
     private static string RunDbDump(string mdbPath)
     {
         string jackJar = FindJar("jackcess-5.1.5.jar")!;

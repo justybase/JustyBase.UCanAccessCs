@@ -21,6 +21,8 @@ namespace UCanAccess;
 ///   ALTER TABLE name ADD [CONSTRAINT name] FOREIGN KEY (cols) REFERENCES table (cols)
 ///   ALTER TABLE name DROP COLUMN col
 ///   ALTER TABLE name RENAME TO new_name
+///   DISABLE AUTOINCREMENT ON name
+///   ENABLE AUTOINCREMENT ON name
 /// </summary>
 public static class AccessDdl
 {
@@ -141,6 +143,11 @@ public static class AccessDdl
                 ExecuteSelectInto(db, mirror, tokens, dryRun);
                 affected = 0;
                 break;
+            case "DISABLE":
+            case "ENABLE":
+                ExecuteAutoIncrementToggle(db, tokens, dryRun, enable: kind == "ENABLE");
+                affected = 0;
+                break;
             default:
                 throw new NotSupportedException($"Statement type '{kind}' is not supported for DDL.");
         }
@@ -150,6 +157,34 @@ public static class AccessDdl
             mirror?.RefreshAll();
         }
         return affected;
+    }
+
+    /// <summary>
+    /// Executes <c>DISABLE AUTOINCREMENT ON name</c> / <c>ENABLE AUTOINCREMENT ON name</c>.
+    /// The toggle is connection-level, in-memory state (the original UCanAccess keeps it
+    /// on the Jackcess table object); nothing is written to the file.
+    /// </summary>
+    private static int ExecuteAutoIncrementToggle(File.Database db, List<Token> tokens, bool dryRun, bool enable)
+    {
+        if (tokens.Count < 4
+            || !tokens[1].Text.Equals("autoincrement", StringComparison.OrdinalIgnoreCase)
+            || !tokens[2].Text.Equals("on", StringComparison.OrdinalIgnoreCase)
+            || tokens[3].Kind is not (Kind.Word or Kind.Ident))
+        {
+            throw new NotSupportedException(
+                $"Expected '{(enable ? "ENABLE" : "DISABLE")} AUTOINCREMENT ON <table>'.");
+        }
+        string tableName = tokens[3].Text;
+        if (!db.GetTableMetaData().Any(meta => !meta.IsSystem
+                && string.Equals(meta.Name, tableName, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new DatabaseException($"Table '{tableName}' does not exist.");
+        }
+        if (!dryRun)
+        {
+            db.SetAllowAutoNumberInsert(tableName, !enable);
+        }
+        return 0;
     }
 
     private static int ExecuteCreate(File.Database db, Mirror? mirror, List<Token> tokens, bool dryRun)

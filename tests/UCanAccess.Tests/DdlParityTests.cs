@@ -206,7 +206,79 @@ public class DdlParityTests
             Assert.True(portCols.ContainsKey("t_new"), "port file is missing t_new");
             Assert.True(javaCols.ContainsKey("t_new"), "java file is missing t_new");
             Assert.Equal(javaCols["t_new"], portCols["t_new"]);
-            Assert.Contains("alpha", portJson);
+        }
+        finally
+        {
+            System.IO.File.Delete(portCopy);
+            System.IO.File.Delete(javaCopy);
+            System.IO.File.Delete(scriptPath);
+        }
+    }
+
+    private static List<string> ExtractRows(string json, string tableName)
+    {
+        var rows = new List<string>();
+        using var doc = JsonDocument.Parse(json);
+        foreach (JsonElement table in doc.RootElement.GetProperty("tables").EnumerateArray())
+        {
+            if (!table.GetProperty("name").GetString()!.Equals(tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            foreach (JsonElement row in table.GetProperty("rows").EnumerateArray())
+            {
+                rows.Add(JsonSerializer.Serialize(row));
+            }
+        }
+        return rows;
+    }
+
+    [Fact]
+    public void Disable_enable_autoincrement_produces_same_file_state_as_java()
+    {
+        if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.6.jar") == null
+            || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
+        {
+            _output.WriteLine("SKIPPED: java/jars/classes not available");
+            throw Xunit.Sdk.SkipException.ForSkip("java/jars/classes not available");
+        }
+
+        string[] statements =
+        {
+            // explicit value while AUTOINCREMENT is enabled: silently ignored by both
+            "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (500, 1, 7, 1.50, #1/1/2024#, 'explicit enabled', 'x01')",
+            "DISABLE AUTOINCREMENT ON t_detail",
+            "INSERT INTO t_detail (id, master_id, qty, price, dt, note, code) VALUES (501, 1, 8, 2.00, #1/2/2024#, 'explicit disabled', 'x02')",
+            "ENABLE AUTOINCREMENT ON t_detail",
+            "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 9, 3.00, #1/3/2024#, 'auto after enable', 'x03')",
+        };
+
+        string scriptPath = Path.Combine(Path.GetTempPath(), $"ucanaccess_ddlp_{Guid.NewGuid():N}.sql");
+        System.IO.File.WriteAllLines(scriptPath, statements);
+
+        string portCopy = TempCopy(Fixture("sqljoin.mdb"));
+        string javaCopy = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            ApplyViaPort(portCopy, statements);
+
+            string jackJar = FindJar("jackcess-5.1.5.jar")!;
+            string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.6.jar")!;
+            string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
+            RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
+
+            string portJson = RunDbDump(jackJar, classesDir, portCopy);
+            string javaJson = RunDbDump(jackJar, classesDir, javaCopy);
+
+            var portRows = ExtractRows(portJson, "t_detail");
+            var javaRows = ExtractRows(javaJson, "t_detail");
+            Assert.Equal(javaRows.Count, portRows.Count);
+            Assert.Equal(javaRows, portRows);
+            Assert.Contains("\"explicit disabled\"", portJson);
+            Assert.Contains("501", portJson);
+            Assert.Contains("\"auto after enable\"", portJson);
         }
         finally
         {

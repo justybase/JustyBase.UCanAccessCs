@@ -201,7 +201,7 @@ public sealed class UCanAccessCommand : DbCommand
 
             return connection.ExecuteDmlAtomically(sql, parameters);
         }
-        if (kind is "CREATE" or "DROP" or "ALTER"
+        if (kind is "CREATE" or "DROP" or "ALTER" or "DISABLE" or "ENABLE"
             || (kind == "SELECT" && AccessDdl.IsSelectInto(sql)))
         {
             UCanAccessTransaction? transaction = GetTransaction(connection);
@@ -221,6 +221,7 @@ public sealed class UCanAccessCommand : DbCommand
                     : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase);
                 int result = AccessDdl.Execute(connection.AccessDatabase, mirror, sql);
                 connection.MarkDatabaseCurrent();
+                connection.SyncAutoNumberFlags(connection.AccessDatabase);
                 return result;
             }
             finally

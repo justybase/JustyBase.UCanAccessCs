@@ -173,8 +173,26 @@ public sealed class UCanAccessConnection : DbConnection
 
     internal bool KeepMirror => _connStr?.KeepMirror ?? true;
 
+    /// <summary>
+    /// Per-table AUTOINCREMENT state (DISABLE AUTOINCREMENT ON ...) held at the
+    /// connection level so it survives the database-object reloads performed by
+    /// the atomic staging pipeline.  Applied to every database opened from this
+    /// connection; never written to the file (mirrors Jackcess semantics).
+    /// </summary>
+    private readonly Dictionary<string, bool> _autoNumberFlags = new(StringComparer.OrdinalIgnoreCase);
+
+    internal void SyncAutoNumberFlags(File.Database database)
+    {
+        _autoNumberFlags.Clear();
+        foreach ((string tableName, bool allowed) in database.GetAllowAutoNumberInsertFlags())
+        {
+            _autoNumberFlags[tableName] = allowed;
+        }
+    }
+
     internal File.Database OpenDatabaseFile(string path, bool readOnly)
     {
+        File.Database database;
         string? password = _connStr?.Password;
         if (password is { Length: > 0 } && _databaseOpener == null)
         {
@@ -183,11 +201,19 @@ public sealed class UCanAccessConnection : DbConnection
         }
         if (_databaseOpener != null)
         {
-            return _databaseOpener.Open(new AccessDatabaseOpenRequest(path, readOnly,
+            database = _databaseOpener.Open(new AccessDatabaseOpenRequest(path, readOnly,
                 _connStr?.ResolveEncoding(), _connStr?.AllowExternalLinks ?? false, password));
         }
-        return File.Database.Open(path, _connStr?.ResolveEncoding(), readOnly,
-            _connStr?.AllowExternalLinks ?? false);
+        else
+        {
+            database = File.Database.Open(path, _connStr?.ResolveEncoding(), readOnly,
+                _connStr?.AllowExternalLinks ?? false);
+        }
+        foreach ((string tableName, bool allowed) in _autoNumberFlags)
+        {
+            database.SetAllowAutoNumberInsert(tableName, allowed);
+        }
+        return database;
     }
 
     public override string Database => _connStr?.DataSource ?? string.Empty;

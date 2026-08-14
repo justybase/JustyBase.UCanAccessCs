@@ -927,6 +927,7 @@ public sealed class Table
         {
             return;
         }
+        bool allowAutoNumberInsert = _database.AllowAutoNumberInsert(Name);
         foreach (Column column in _columns)
         {
             if (!column.AutoNumber)
@@ -935,15 +936,21 @@ public sealed class Table
             }
             if (column.Type == DataType.Long)
             {
-                if (!preserveAutoNumbers || IsNullValue(row[column.ColumnIndex]))
-                {
-                    row[column.ColumnIndex] = ++_lastLongAutoNumber;
-                }
-                else
+                bool keepSupplied = preserveAutoNumbers || allowAutoNumberInsert;
+                if (keepSupplied && !IsNullValue(row[column.ColumnIndex]))
                 {
                     int supplied = Convert.ToInt32(row[column.ColumnIndex], System.Globalization.CultureInfo.InvariantCulture);
                     _lastLongAutoNumber = Math.Max(_lastLongAutoNumber, supplied);
                     row[column.ColumnIndex] = supplied;
+                }
+                else if (allowAutoNumberInsert && !preserveAutoNumbers)
+                {
+                    throw new DatabaseException(
+                        $"AutoNumber column '{column.Name}' requires an explicit value while AUTOINCREMENT is disabled.");
+                }
+                else
+                {
+                    row[column.ColumnIndex] = ++_lastLongAutoNumber;
                 }
             }
             else if (column.Type == DataType.Guid)
