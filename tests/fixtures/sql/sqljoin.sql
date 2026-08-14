@@ -83,3 +83,6 @@ SELECT count(*) FROM t_master WHERE name > 'ALPHA'
 SELECT id, code FROM t_detail WHERE code = 'A01' ORDER BY id
 SELECT id, note FROM t_detail WHERE note = 'FIRST ITEM' ORDER BY id
 SELECT id FROM t_master WHERE name BETWEEN 'ALPHA' AND 'DELTA' ORDER BY id
+SELECT t_detail.* FROM t_detail WHERE qty > 3 ORDER BY id
+SELECT d.*, m.name FROM t_detail d INNER JOIN t_master m ON d.master_id = m.id ORDER BY d.id
+SELECT [t_detail].* FROM [t_detail] WHERE qty > 3 ORDER BY id

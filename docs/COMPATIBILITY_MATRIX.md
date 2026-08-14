@@ -22,7 +22,7 @@ misleading name.
 | Jet 3/4 `.mdb` read | Supported | File differential tests and fixtures | Add more real-world Jet 3 files |
 | Jet 3 write | Supported | `Jet3WriteTests` and Java read-back | Add corruption/reopen matrix |
 | Access 2007/2010/2016 | Supported | ACCDB fixtures and differential tests | Add 2013/large/OLE fixtures |
-| SELECT, joins, grouping, CTE, set operators | Supported | SQL oracle corpus | Add parameterized corpus cases |
+| SELECT, joins, grouping, CTE, set operators | Supported | SQL oracle corpus; qualified `table.*` projections added to `sqljoin.sql` (88 statements) | Add parameterized corpus cases |
 | `TOP n PERCENT` | Unsupported | Java UCanAccess 5.1.6 rejects it; explicit translator test preserves that boundary | Revisit only with a newer pinned upstream baseline |
 | Window functions | Supported | `WindowFunctionTests` | Add type/null/error parity |
 | `TRANSFORM/PIVOT` | Partial | `CrosstabTests`, translator tests, and `pivot.sql`; explicit `IN (...)` plus inline dynamic forms | Add parameterized saved-QueryDef coverage and richer Access crosstab grammar |

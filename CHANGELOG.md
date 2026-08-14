@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added SQL-corpus parity coverage for qualified `table.*` projections
+  (`SELECT t_detail.*`, alias-qualified `d.*` in joins, and bracketed
+  `[t_detail].*`) against Java UCanAccess 5.1.6.
 - Added Access `DELETE * FROM <table>` statements (the Access wildcard
   projection), with file-state parity against Java UCanAccess 5.1.6.
 - Added Access `DISABLE/ENABLE AUTOINCREMENT ON <table>` statements with

@@ -23,7 +23,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 
 | Feature | Status | Notes |
 |---|---:|---|
-| SELECT, filtering, grouping, HAVING, ordering | ✅ | Executed through the SQLite mirror with Access rewrites. |
+| SELECT, filtering, grouping, HAVING, ordering | ✅ | Executed through the SQLite mirror with Access rewrites. Qualified `table.*` projections (plain, alias-qualified in joins, bracketed) are covered by the SQL parity corpus. |
 | INNER/LEFT/RIGHT/FULL JOIN | ✅ | Covered by the SQL parity corpus where supported by SQLite translation. |
 | Subqueries, UNION/EXCEPT/INTERSECT, CTE | ✅ | SELECT and correlated DML subqueries are evaluated by the SQLite mirror. |
 | DISTINCT, DISTINCTROW, TOP n | ✅ | `TOP n PERCENT` is rejected to match UCanAccess 5.1.6. |
