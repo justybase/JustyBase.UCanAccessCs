@@ -287,4 +287,53 @@ public class DdlParityTests
             System.IO.File.Delete(scriptPath);
         }
     }
+
+    [Fact]
+    public void Delete_star_from_produces_same_file_state_as_java()
+    {
+        if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.6.jar") == null
+            || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
+        {
+            _output.WriteLine("SKIPPED: java/jars/classes not available");
+            throw Xunit.Sdk.SkipException.ForSkip("java/jars/classes not available");
+        }
+
+        string[] statements =
+        {
+            "DELETE * FROM t_detail WHERE qty = 5",
+            "DELETE * FROM t_detail",
+        };
+
+        string scriptPath = Path.Combine(Path.GetTempPath(), $"ucanaccess_ddlp_{Guid.NewGuid():N}.sql");
+        System.IO.File.WriteAllLines(scriptPath, statements);
+
+        string portCopy = TempCopy(Fixture("sqljoin.mdb"));
+        string javaCopy = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            ApplyViaPort(portCopy, statements);
+
+            string jackJar = FindJar("jackcess-5.1.5.jar")!;
+            string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.6.jar")!;
+            string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
+            RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
+
+            string portJson = RunDbDump(jackJar, classesDir, portCopy);
+            string javaJson = RunDbDump(jackJar, classesDir, javaCopy);
+
+            var portRows = ExtractRows(portJson, "t_detail");
+            var javaRows = ExtractRows(javaJson, "t_detail");
+            Assert.Equal(javaRows.Count, portRows.Count);
+            Assert.Equal(javaRows, portRows);
+            Assert.Equal(0, javaRows.Count);
+        }
+        finally
+        {
+            System.IO.File.Delete(portCopy);
+            System.IO.File.Delete(javaCopy);
+            System.IO.File.Delete(scriptPath);
+        }
+    }
 }

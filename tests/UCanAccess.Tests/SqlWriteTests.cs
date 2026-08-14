@@ -555,6 +555,48 @@ public class SqlWriteTests
     }
 
     [Fact]
+    public void Delete_star_from_matches_delete_from()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "INSERT INTO t_empty (name) VALUES ('keep')");
+            Exec(conn, "INSERT INTO t_empty (name) VALUES ('remove')");
+            Exec(conn, "INSERT INTO t_empty (name) VALUES ('other')");
+
+            int affected;
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "DELETE * FROM t_empty WHERE name = 'remove'";
+                affected = cmd.ExecuteNonQuery();
+            }
+            Assert.Equal(1, affected);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT count(*) FROM t_empty";
+                Assert.Equal(2L, cmd.ExecuteScalar());
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "DELETE * FROM t_empty";
+                affected = cmd.ExecuteNonQuery();
+            }
+            Assert.Equal(2, affected);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT count(*) FROM t_empty";
+                Assert.Equal(0L, cmd.ExecuteScalar());
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Parameterized_insert_and_delete()
     {
         string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));

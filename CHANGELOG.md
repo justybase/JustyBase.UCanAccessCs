@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added Access `DELETE * FROM <table>` statements (the Access wildcard
+  projection), with file-state parity against Java UCanAccess 5.1.6.
 - Added Access `DISABLE/ENABLE AUTOINCREMENT ON <table>` statements with
   Java UCanAccess 5.1.6 parity: explicit AutoNumber values are honored only
   while autoincrement is disabled, and `ENABLE` resumes at max+1. The flag is

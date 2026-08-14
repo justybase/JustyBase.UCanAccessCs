@@ -26,7 +26,7 @@ misleading name.
 | `TOP n PERCENT` | Unsupported | Java UCanAccess 5.1.6 rejects it; explicit translator test preserves that boundary | Revisit only with a newer pinned upstream baseline |
 | Window functions | Supported | `WindowFunctionTests` | Add type/null/error parity |
 | `TRANSFORM/PIVOT` | Partial | `CrosstabTests`, translator tests, and `pivot.sql`; explicit `IN (...)` plus inline dynamic forms | Add parameterized saved-QueryDef coverage and richer Access crosstab grammar |
-| INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases | Add larger Java behavioral oracle for DML |
+| INSERT/UPDATE/DELETE | Supported | `SqlWriteTests` including NULL, correlated subquery and JOIN cases; `DELETE * FROM` wildcard form with `SqlWriteTests.Delete_star_from_*` and file-state parity with Java 5.1.6 | Add larger Java behavioral oracle for DML |
 | `CREATE/DROP TABLE` | Supported | `SqlDdlTests` and DDL parity | Add more constraints and Access type inference cases |
 | `CREATE TABLE ... AS SELECT` | Supported | `SqlDdlTests.Create_table_as_select_*` | Add parameterized/complex-type cases |
 | `SELECT ... INTO` | Supported (port extension) | `SqlDdlTests.Select_into_*` incl. transaction commit/rollback and reader rejection | Documented as extension: Java UCanAccess 5.1.6 rejects the Access `INTO` grammar |

@@ -14,7 +14,7 @@ namespace UCanAccess;
 ///   INSERT INTO table [(col1, col2, ...)] VALUES (v1, v2, ...) [,(v1, v2, ...)]
 ///   INSERT INTO table VALUES (v1, v2, ...)
 ///   UPDATE table [JOIN ...] SET col = expression [, ...] [WHERE condition]
-///   DELETE FROM table [JOIN ...] [WHERE condition]
+///   DELETE [*] FROM table [JOIN ...] [WHERE condition]
 ///
 /// UPDATE and DELETE selection expressions are translated through the mirror,
 /// so Access functions, joins, correlated subqueries and SQL three-valued NULL
@@ -579,15 +579,21 @@ public static class AccessDml
     private static int ExecuteDeleteFromMirror(File.Database db, Mirror mirror, List<Token> tokens,
         IReadOnlyList<object?>? parameters, bool dryRun)
     {
-        if (tokens.Count < 3 || !tokens[1].Text.Equals("from", StringComparison.OrdinalIgnoreCase))
+        int tableIndex = 2;
+        if (tokens[1].Text == "*")
+        {
+            tableIndex = 3;
+        }
+        if (tokens.Count <= tableIndex
+            || !tokens[tableIndex - 1].Text.Equals("from", StringComparison.OrdinalIgnoreCase))
         {
             throw new NotSupportedException("DELETE requires FROM followed by a table name.");
         }
-        string targetName = tokens[2].Text;
+        string targetName = tokens[tableIndex].Text;
         Table table = ResolveTable(db, targetName);
-        int whereIndex = FindTopLevelWord(tokens, "where", 3);
-        string targetReference = GetTargetReference(tokens, 2, whereIndex < 0 ? tokens.Count : whereIndex);
-        string fromClause = RebuildSql(tokens, 2, whereIndex < 0 ? tokens.Count : whereIndex);
+        int whereIndex = FindTopLevelWord(tokens, "where", tableIndex + 1);
+        string targetReference = GetTargetReference(tokens, tableIndex, whereIndex < 0 ? tokens.Count : whereIndex);
+        string fromClause = RebuildSql(tokens, tableIndex, whereIndex < 0 ? tokens.Count : whereIndex);
         string selectSql = $"SELECT {targetReference}.rowid FROM {fromClause}"
             + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
