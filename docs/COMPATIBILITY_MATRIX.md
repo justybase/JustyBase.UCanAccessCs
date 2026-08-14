@@ -37,7 +37,7 @@ misleading name.
 | `CREATE/DROP VIEW` | Partial | Managed SELECT QueryDef writer, catalog round-trip, JOIN and parameter expansion tests | Broaden saved-query grammar (FULL JOIN/crosstab); action QueryDefs remain out of scope |
 | Saved SELECT queries | Supported (subset) | Read-only mirror views plus persisted managed QueryDefs; parameterized definitions are expanded per command | Add richer FULL JOIN/crosstab grammar |
 | Linked tables | Supported | Linked read/write tests; non-atomic direct fallback is explicit | Add remap and concurrency tests |
-| Access functions | Partial | Scalar/aggregate/domain registrations, EVAL/financial/statistical extensions and function tests | Generate a complete parity catalog |
+| Access functions | Partial | Scalar/aggregate/domain registrations, EVAL/financial/statistical extensions, and `FunctionsTests.Additional_java_function_aliases_and_compare_modes` | Generate a complete parity catalog |
 | User-defined scalar functions | Supported | `UCanAccessConnection.RegisterFunction` and function tests | Add an aggregate registration API if needed |
 | Complex types/attachments | Partial | `ComplexTypeTests`, `ComplexTypeProviderTests`, real COM-generated ACCDB fixture; typed arrays and child-table writes | Add version-history and more attachment metadata fixtures; keep complex-field DDL out of scope |
 | Password/encrypted files | Partial | Optional `JustyBase.UCanAccess.AccessCrypto`; `AccessComRoundTripTests` (opt-in) | Expand the profile matrix; legacy `.mdb` encryption is intentionally unsupported |

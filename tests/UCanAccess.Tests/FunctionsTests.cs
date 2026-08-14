@@ -302,6 +302,18 @@ public class FunctionsTests
     }
 
     [Fact]
+    public void Additional_java_function_aliases_and_compare_modes()
+    {
+        using var conn = Open("sqljoin.mdb");
+        Assert.Equal(-1L, ScalarAs<long>("SELECT Sign(-2) FROM t_detail WHERE id = 1", conn));
+        Assert.Equal(4L, ScalarAs<long>("SELECT CLong(3.7) FROM t_detail WHERE id = 1", conn));
+        Assert.Equal(12345680.0, ScalarAs<double>("SELECT CSign(12345678.9) FROM t_detail WHERE id = 1", conn), 5);
+        Assert.Equal(32L, ScalarAs<long>("SELECT StrComp('a', 'A') FROM t_detail WHERE id = 1", conn));
+        Assert.Equal(32L, ScalarAs<long>("SELECT StrComp('a', 'A', 0) FROM t_detail WHERE id = 1", conn));
+        Assert.Equal(0L, ScalarAs<long>("SELECT StrComp('a', 'A', 1) FROM t_detail WHERE id = 1", conn));
+    }
+
+    [Fact]
     public void Functions_on_fixture_columns()
     {
         using var conn = Open("pivot.mdb");

@@ -31,7 +31,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | Window functions | ✅ | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, partitions, ordering, and SQLite window frames are preserved by the translator. |
 | TRANSFORM/PIVOT crosstab queries | 🟡 | Explicit `IN (...)` and inline dynamic pivots are supported; saved dynamic pivots with parameters remain limited. |
 | Linked tables in queries | ✅ | Targets are resolved and mirrored under the link name. |
-| Access/VBA functions | 🟡 | Implemented function set is broad, but not every Access/VBA function exists. |
+| Access/VBA functions | 🟡 | Broad function set including Java-compatible `Sign`, `CLong`, `CSign`, and `StrComp` comparison modes; not every Access/VBA function exists. |
 | Access LIKE (`*`, `?`, `#`, `[... ]`) | ✅ | Includes case-insensitive matching. |
 | Case-insensitive text comparisons | ✅ | Text columns use the mirror's Access-compatible collation. |
 | Access NULL ordering | ✅ | DESC sort keys are rewritten to place NULL first. |

@@ -89,7 +89,8 @@ public static class AccessFunctions
         RegisterVar(connection, "asc", a => AsString(a[0]) is { Length: > 0 } s ? (long)s[0] : 0L);
         RegisterVar(connection, "chr", a => ((char)(int)ToLong(a[0])).ToString());
         RegisterVar(connection, "strconv", a => StrConv(AsString(a[0]) ?? "", (int)ToLong(a[1])));
-        RegisterVar(connection, "strcomp", a => StrComp(AsString(a[0]) ?? "", AsString(a[1]) ?? ""));
+        RegisterVar(connection, "strcomp", a => StrComp(AsString(a[0]) ?? "", AsString(a[1]) ?? "",
+            a.Length > 2 ? ToLong(a[2]) : 0));
         RegisterVar(connection, "strreverse", a => new string((AsString(a[0]) ?? "").Reverse().ToArray()));
         RegisterVar(connection, "ucase", a => (AsString(a[0]) ?? "").ToUpperInvariant());
         RegisterVar(connection, "lcase", a => (AsString(a[0]) ?? "").ToLowerInvariant());
@@ -106,6 +107,9 @@ public static class AccessFunctions
         RegisterVar(connection, "int", a => (long)Math.Floor(ToDouble(a[0])));
         RegisterVar(connection, "fix", a => (long)Math.Truncate(ToDouble(a[0])));
         RegisterVar(connection, "sgn", a => Math.Sign(ToDouble(a[0])));
+        RegisterVar(connection, "sign", a => Math.Sign(ToDouble(a[0])));
+        RegisterVar(connection, "clong", a => (long)Math.Round(ToDouble(a[0])));
+        RegisterVar(connection, "csign", a => CSign(ToDouble(a[0])));
         RegisterVar(connection, "sqr", a => Math.Sqrt(ToDouble(a[0])));
         RegisterVar(connection, "abs", a => Math.Abs(ToDouble(a[0])), true);
         RegisterVar(connection, "sin", a => Math.Sin(ToDouble(a[0])), true);
@@ -637,13 +641,29 @@ public static class AccessFunctions
         return sb.ToString();
     }
 
-    private static long StrComp(string? s1, string? s2)
-        => string.Compare(s1, s2, StringComparison.OrdinalIgnoreCase) switch
+    private static long StrComp(string? s1, string? s2, long compare)
+        => compare == 0
+            ? string.CompareOrdinal(s1 ?? "", s2 ?? "")
+            : string.Compare(s1 ?? "", s2 ?? "", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Rounds to the seven significant digits used by Java UCanAccess CSign.</summary>
+    private static double CSign(double value)
+    {
+        if (value == 0 || double.IsNaN(value) || double.IsInfinity(value))
         {
-            < 0 => -1,
-            > 0 => 1,
-            _ => 0,
-        };
+            return value;
+        }
+
+        int exponent = (int)Math.Floor(Math.Log10(Math.Abs(value)));
+        int decimalPlaces = 6 - exponent;
+        if (decimalPlaces >= 0)
+        {
+            return Math.Round(value, decimalPlaces, MidpointRounding.AwayFromZero);
+        }
+
+        double scale = Math.Pow(10, -decimalPlaces);
+        return Math.Round(value / scale, MidpointRounding.AwayFromZero) * scale;
+    }
 
     private static double Val(string s)
     {
