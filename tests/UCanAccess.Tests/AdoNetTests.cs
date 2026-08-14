@@ -29,6 +29,41 @@ public class AdoNetTests
     }
 
     [Fact]
+    public async Task Async_open_command_and_reader_follow_ado_net_contract()
+    {
+        await using var conn = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("pivot.mdb")};Read Only=true",
+        };
+        CancellationToken testCancellation = TestContext.Current.CancellationToken;
+        await conn.OpenAsync(testCancellation);
+
+        await using var command = conn.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM t_pivot";
+        Assert.Equal(4L, await command.ExecuteScalarAsync(testCancellation));
+
+        command.CommandText = "SELECT c_cod FROM t_pivot ORDER BY c_cod";
+        await using DbDataReader reader = await command.ExecuteReaderAsync(testCancellation);
+        Assert.True(await reader.ReadAsync(testCancellation));
+        Assert.Equal("paperino", reader.GetString(0));
+    }
+
+    [Fact]
+    public async Task Async_command_honors_pre_canceled_token()
+    {
+        using var conn = Open("pivot.mdb");
+        using var command = conn.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM t_pivot";
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+#pragma warning disable xUnit1051 // this test intentionally supplies an already-canceled token
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => command.ExecuteScalarAsync(cancellation.Token));
+#pragma warning restore xUnit1051
+    }
+
+    [Fact]
     public void Select_star_reads_all_rows()
     {
         using var conn = Open("pivot.mdb");

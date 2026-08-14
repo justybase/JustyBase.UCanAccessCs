@@ -8,7 +8,8 @@ namespace UCanAccess;
 /// Executes Access SQL data-definition statements (CREATE/DROP/ALTER) against the MDB file.
 ///
 /// Supported grammar (subset of the UCanAccess/HSQLDB surface):
-///   CREATE TABLE name (col type [NOT NULL] [, ...] [, PRIMARY KEY (cols)] [, UNIQUE (cols)])
+///   CREATE TABLE name (col type [NOT NULL] [, ...] [, PRIMARY KEY (cols)] [, UNIQUE (cols)]
+///       [, CONSTRAINT name FOREIGN KEY (cols) REFERENCES table (cols)])
 ///   CREATE TABLE name AS SELECT ... [WITH DATA|WITH NO DATA]
 ///   CREATE INDEX name ON table (col [ASC|DESC], ...) [WITH PRIMARY|UNIQUE|DISALLOW NULL|IGNORE NULL]
 ///   CREATE VIEW name AS SELECT ...
@@ -16,6 +17,7 @@ namespace UCanAccess;
 ///   DROP INDEX name ON table
 ///   DROP VIEW name
 ///   ALTER TABLE name ADD COLUMN col type
+///   ALTER TABLE name ADD [CONSTRAINT name] FOREIGN KEY (cols) REFERENCES table (cols)
 ///   ALTER TABLE name DROP COLUMN col
 ///   ALTER TABLE name RENAME TO new_name
 /// </summary>
@@ -42,6 +44,21 @@ public static class AccessDdl
         }
         int index = tokens[1].Text.Equals("unique", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
         return index < tokens.Count && tokens[index].Text.Equals("index", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns whether an autocommit schema statement must be applied to a
+    /// private staging copy before it can replace the source file.  All Access
+    /// DDL mutates catalog, table-definition or relationship pages, so keeping
+    /// only index DDL behind the atomic boundary is unsafe.
+    /// </summary>
+    internal static bool RequiresAtomicFileMutation(string sql)
+    {
+        List<Token> tokens = Tokenize(sql);
+        return tokens.Count > 0
+            && (tokens[0].Text.Equals("create", StringComparison.OrdinalIgnoreCase)
+                || tokens[0].Text.Equals("drop", StringComparison.OrdinalIgnoreCase)
+                || tokens[0].Text.Equals("alter", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Executes the DDL statement; returns the number of rows affected (0 for DDL).</summary>
@@ -168,8 +185,8 @@ public static class AccessDdl
 
         var columns = new List<ColumnBuilder>();
         var indexes = new List<IndexBuilder>();
-        var autoPkIndexes = new List<IndexBuilder>();
         int pkColNumber = -1;
+        var relationships = new List<RelationshipBuilder>();
 
         while (true)
         {
@@ -178,42 +195,65 @@ public static class AccessDdl
                 break;
             }
 
-            // table-level constraint: PRIMARY KEY (cols) / UNIQUE (cols)
-            if (PeekWord(tokens, pos, "primary") || PeekWord(tokens, pos, "unique"))
+            // table-level constraint: PRIMARY KEY (cols), UNIQUE (cols), or
+            // FOREIGN KEY (...) REFERENCES ...
+            if (PeekWord(tokens, pos, "primary") || PeekWord(tokens, pos, "unique")
+                || PeekWord(tokens, pos, "constraint") || PeekWord(tokens, pos, "foreign"))
             {
-                bool primary = PeekWord(tokens, pos, "primary");
-                string idxName = primary ? "PrimaryKey" : "idx_" + Guid.NewGuid().ToString("N")[..8];
-                var builder = new IndexBuilder(idxName);
-                if (primary)
+                string? explicitName = null;
+                if (PeekWord(tokens, pos, "constraint"))
                 {
-                    builder.WithPrimaryKey();
+                    pos++;
+                    explicitName = ReadName(tokens, ref pos);
+                }
+                bool primary = PeekWord(tokens, pos, "primary");
+                bool unique = PeekWord(tokens, pos, "unique");
+                if (PeekWord(tokens, pos, "foreign"))
+                {
+                    string relationshipName = explicitName
+                        ?? "fk_" + Guid.NewGuid().ToString("N")[..8];
+                    relationships.Add(ParseForeignKey(tokens, ref pos, tableName, relationshipName));
                 }
                 else
                 {
-                    builder.WithUnique();
-                }
-                pos++;
-                if (primary)
-                {
-                    ExpectWord(tokens, ref pos, "key");
-                }
-                ExpectSymbol(tokens, ref pos, "(");
-                while (true)
-                {
-                    string colName = ReadName(tokens, ref pos);
-                    builder.WithColumns(colName);
-                    if (Peek(tokens, pos) is { Text: "," })
+                    if (!primary && !unique)
                     {
-                        pos++;
-                        continue;
+                        throw new NotSupportedException(
+                            "CREATE TABLE constraints currently support PRIMARY KEY, UNIQUE and FOREIGN KEY only.");
                     }
-                    break;
-                }
-                ExpectSymbol(tokens, ref pos, ")");
-                indexes.Add(builder);
-                if (primary)
-                {
-                    pkColNumber = -1;
+                    string idxName = explicitName ?? (primary ? "PrimaryKey" : "idx_" + Guid.NewGuid().ToString("N")[..8]);
+                    var builder = new IndexBuilder(idxName);
+                    if (primary)
+                    {
+                        builder.WithPrimaryKey();
+                    }
+                    else
+                    {
+                        builder.WithUnique();
+                    }
+                    pos++;
+                    if (primary)
+                    {
+                        ExpectWord(tokens, ref pos, "key");
+                    }
+                    ExpectSymbol(tokens, ref pos, "(");
+                    while (true)
+                    {
+                        string colName = ReadName(tokens, ref pos);
+                        builder.WithColumns(colName);
+                        if (Peek(tokens, pos) is { Text: "," })
+                        {
+                            pos++;
+                            continue;
+                        }
+                        break;
+                    }
+                    ExpectSymbol(tokens, ref pos, ")");
+                    indexes.Add(builder);
+                    if (primary)
+                    {
+                        pkColNumber = -1;
+                    }
                 }
             }
             else
@@ -245,6 +285,11 @@ public static class AccessDdl
                     {
                         pos++;
                         column.WithAutoNumber();
+                    }
+                    else if (PeekWord(tokens, pos, "default"))
+                    {
+                        pos++;
+                        column.WithDefault(ReadDefaultExpression(tokens, ref pos));
                     }
                     else
                     {
@@ -279,10 +324,40 @@ public static class AccessDdl
         }
         ExpectSymbol(tokens, ref pos, ")");
         EnsureEnd(tokens, pos);
+        ValidateDefaultExpressions(columns);
 
         if (!dryRun)
         {
-            db.CreateTable(tableName, columns, indexes);
+            bool created = false;
+            try
+            {
+                db.CreateTable(tableName, columns, indexes);
+                created = true;
+                foreach (RelationshipBuilder relationship in relationships)
+                {
+                    db.AddRelationship(relationship);
+                }
+            }
+            catch
+            {
+                // CREATE TABLE ... FOREIGN KEY is one DDL statement.  The file
+                // layer commits table creation before it can validate the parent
+                // and existing child rows, so remove the newly-created table (and
+                // any relationship/index metadata created for it) on failure.
+                if (created)
+                {
+                    try
+                    {
+                        db.DeleteTable(tableName);
+                    }
+                    catch
+                    {
+                        // Preserve the original DDL error.  The command-level
+                        // staging path still protects the source file atomically.
+                    }
+                }
+                throw;
+            }
         }
     }
 
@@ -730,23 +805,48 @@ public static class AccessDdl
                         AddPrimaryKey(db, tableName, constraintName, tokens, ref pos, dryRun);
                         break;
                     }
-                    throw new NotSupportedException("ALTER TABLE ADD CONSTRAINT currently supports PRIMARY KEY only.");
+                    if (PeekWord(tokens, pos, "foreign"))
+                    {
+                        AddForeignKey(db, tableName, constraintName, tokens, ref pos, dryRun);
+                        break;
+                    }
+                    throw new NotSupportedException(
+                        "ALTER TABLE ADD CONSTRAINT currently supports PRIMARY KEY and FOREIGN KEY only.");
+                }
+                if (PeekWord(tokens, pos, "foreign"))
+                {
+                    AddForeignKey(db, tableName, "fk_" + Guid.NewGuid().ToString("N")[..8],
+                        tokens, ref pos, dryRun);
+                    break;
                 }
                 ExpectWord(tokens, ref pos, "column");
                 {
                     string colName = ReadName(tokens, ref pos);
                     ColumnBuilder column = ParseColumnType(tokens, ref pos, colName);
-                    if (PeekWord(tokens, pos, "not") && PeekAheadWord(tokens, pos, 1, "null"))
+                    while (true)
                     {
-                        pos += 2;
-                        column.WithRequired();
+                        if (PeekWord(tokens, pos, "not") && PeekAheadWord(tokens, pos, 1, "null"))
+                        {
+                            pos += 2;
+                            column.WithRequired();
+                        }
+                        else if (PeekWord(tokens, pos, "default"))
+                        {
+                            pos++;
+                            column.WithDefault(ReadDefaultExpression(tokens, ref pos));
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
                     EnsureEnd(tokens, pos);
+                    ValidateDefaultExpressions(new[] { column });
                     if (column.Required)
                     {
                         Table? existing = db.GetTable(tableName)
                             ?? throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-                        if (existing.RowCount > 0)
+                        if (existing.RowCount > 0 && column.DefaultValue == null)
                         {
                             throw new NotSupportedException(
                                 "ALTER TABLE ADD COLUMN NOT NULL requires a DEFAULT value for existing rows.");
@@ -766,8 +866,23 @@ public static class AccessDdl
                 }
                 if (PeekWord(tokens, pos, "constraint"))
                 {
+                    pos++;
+                    string constraintName = ReadName(tokens, ref pos);
+                    EnsureEnd(tokens, pos);
+                    Relationship? relationship = db.GetRelationships().FirstOrDefault(rel =>
+                        rel.Name.Equals(constraintName, StringComparison.OrdinalIgnoreCase)
+                        && (rel.FromTable.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase)
+                            || rel.ToTable.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase)));
+                    if (relationship != null)
+                    {
+                        if (!dryRun)
+                        {
+                            db.DropRelationship(constraintName);
+                        }
+                        break;
+                    }
                     throw new NotSupportedException(
-                        "ALTER TABLE DROP CONSTRAINT is not supported by the UCanAccess 5.1.6 compatibility baseline.");
+                        "ALTER TABLE DROP CONSTRAINT is supported only for foreign-key relationships.");
                 }
                 ExpectWord(tokens, ref pos, "column");
                 {
@@ -803,6 +918,45 @@ public static class AccessDdl
         }
     }
 
+    private static string ReadDefaultExpression(List<Token> tokens, ref int pos)
+    {
+        int start = pos;
+        int depth = 0;
+        while (pos < tokens.Count)
+        {
+            Token token = tokens[pos];
+            bool keywordBoundary = token.Kind is Kind.Word or Kind.Ident
+                && (token.Text.Equals("not", StringComparison.OrdinalIgnoreCase)
+                    || token.Text.Equals("primary", StringComparison.OrdinalIgnoreCase)
+                    || token.Text.Equals("unique", StringComparison.OrdinalIgnoreCase)
+                    || token.Text.Equals("autoincrement", StringComparison.OrdinalIgnoreCase)
+                    || token.Text.Equals("identity", StringComparison.OrdinalIgnoreCase));
+            if (depth == 0 && (token.Text == "," || token.Text == ")" || keywordBoundary))
+            {
+                break;
+            }
+            if (token.Text == "(") depth++;
+            else if (token.Text == ")") depth--;
+            pos++;
+        }
+        if (start == pos)
+        {
+            throw new InvalidOperationException("DEFAULT requires an expression.");
+        }
+        return RebuildSql(tokens, start, pos);
+    }
+
+    private static void ValidateDefaultExpressions(IEnumerable<ColumnBuilder> columns)
+    {
+        foreach (ColumnBuilder column in columns)
+        {
+            if (column.DefaultValue != null)
+            {
+                _ = DefaultValueEvaluator.Evaluate(column.DefaultValue);
+            }
+        }
+    }
+
     private static void AddPrimaryKey(File.Database db, string tableName, string indexName,
         List<Token> tokens, ref int pos, bool dryRun)
     {
@@ -825,6 +979,97 @@ public static class AccessDdl
         {
             db.AddIndex(tableName, index);
         }
+    }
+
+    private static void AddForeignKey(File.Database db, string tableName, string relationshipName,
+        List<Token> tokens, ref int pos, bool dryRun)
+    {
+        RelationshipBuilder builder = ParseForeignKey(tokens, ref pos, tableName, relationshipName);
+        EnsureEnd(tokens, pos);
+        if (!dryRun)
+        {
+            db.AddRelationship(builder);
+        }
+    }
+
+    private static RelationshipBuilder ParseForeignKey(List<Token> tokens, ref int pos,
+        string tableName, string relationshipName)
+    {
+        ExpectWord(tokens, ref pos, "foreign");
+        ExpectWord(tokens, ref pos, "key");
+        List<string> childColumns = ReadColumnList(tokens, ref pos);
+        ExpectWord(tokens, ref pos, "references");
+        string parentTable = ReadName(tokens, ref pos);
+        List<string> parentColumns = ReadColumnList(tokens, ref pos);
+        if (childColumns.Count != parentColumns.Count)
+        {
+            throw new InvalidOperationException("A foreign key must have the same number of child and parent columns.");
+        }
+
+        var builder = new RelationshipBuilder(relationshipName, parentTable, tableName);
+        for (int i = 0; i < childColumns.Count; i++)
+        {
+            builder.WithColumns(parentColumns[i], childColumns[i]);
+        }
+
+        while (PeekWord(tokens, pos, "on"))
+        {
+            pos++;
+            bool update;
+            if (PeekWord(tokens, pos, "update"))
+            {
+                update = true;
+            }
+            else if (PeekWord(tokens, pos, "delete"))
+            {
+                update = false;
+            }
+            else
+            {
+                throw new InvalidOperationException("Expected UPDATE or DELETE after ON.");
+            }
+            pos++;
+            if (PeekWord(tokens, pos, "cascade"))
+            {
+                pos++;
+                if (update) builder.WithCascadeUpdates();
+                else builder.WithCascadeDeletes();
+            }
+            else if (!update && PeekWord(tokens, pos, "set") && PeekAheadWord(tokens, pos, 1, "null"))
+            {
+                pos += 2;
+                builder.WithCascadeNullOnDelete();
+            }
+            else if (PeekWord(tokens, pos, "no") && PeekAheadWord(tokens, pos, 1, "action"))
+            {
+                // NO ACTION is Access' default behavior; the relationship
+                // catalog represents it by leaving cascade flags unset.
+                pos += 2;
+            }
+            else
+            {
+                throw new NotSupportedException(
+                    "Only CASCADE, SET NULL and NO ACTION foreign-key actions are supported.");
+            }
+        }
+        return builder;
+    }
+
+    private static List<string> ReadColumnList(List<Token> tokens, ref int pos)
+    {
+        ExpectSymbol(tokens, ref pos, "(");
+        var columns = new List<string>();
+        while (true)
+        {
+            columns.Add(ReadName(tokens, ref pos));
+            if (Peek(tokens, pos) is not { Text: "," })
+            {
+                break;
+            }
+            pos++;
+        }
+        ExpectSymbol(tokens, ref pos, ")");
+        return columns;
     }
 
     // ------------------------------------------------------------------
@@ -905,7 +1150,17 @@ public static class AccessDdl
     }
 
     private static bool NeedsNoSpace(Token prev, Token cur)
-        => prev.Text is "(" or "." || cur.Text is ")" or "," or "(" or ".";
+    {
+        if (prev.Text is "(" or "." || cur.Text is ")" or "," or "(" or ".")
+        {
+            return true;
+        }
+
+        // Access tokenizes unary signs separately from the following number.
+        // Keep them adjacent when reconstructing DEFAULT expressions so -1 and
+        // +1 are not turned into the invalid "- 1" / "+ 1" forms.
+        return prev.Text is "+" or "-";
+    }
 
     private static string RenderToken(Token token) => token.Kind switch
     {

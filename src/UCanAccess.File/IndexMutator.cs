@@ -74,8 +74,17 @@ internal static class IndexMutator
             }
 
             PatchIndexTableDefinitionPointers(database, retainedIndexPages, replacement.TableDefPageNumber);
-            database.ReplaceTableDefinition(original.Name, original.TableDefPageNumber,
-                replacement.TableDefPageNumber);
+            int oldTableDefinitionPage = original.TableDefPageNumber;
+            int newTableDefinitionPage = replacement.TableDefPageNumber;
+            IReadOnlyDictionary<int, int> parentIndexMap =
+                BuildIndexNumberMap(original, replacement);
+            database.ReplaceTableDefinition(original.Name, oldTableDefinitionPage,
+                newTableDefinitionPage);
+            // A parent index mutation changes both the table-definition page and,
+            // when the catalog is rebuilt, the logical index numbers.  Update all
+            // child foreign-key slots while the replacement is still staged.
+            database.RetargetForeignKeyIndexes(oldTableDefinitionPage,
+                newTableDefinitionPage, parentIndexMap);
 
             var retainedMetadata = new HashSet<int>(replacement.MetadataPageNumbers);
             foreach (int page in oldMetadata)
@@ -157,6 +166,34 @@ internal static class IndexMutator
         }
     }
 
+    private static IReadOnlyDictionary<int, int> BuildIndexNumberMap(Table original,
+        Table replacement)
+    {
+        var map = new Dictionary<int, int>();
+        var usedReplacementIndexes = new HashSet<int>();
+        foreach (IndexImpl oldIndex in original.Indexes)
+        {
+            IndexImpl? newIndex = replacement.Indexes.FirstOrDefault(candidate =>
+                oldIndex.Name != null && candidate.Name != null
+                && !usedReplacementIndexes.Contains(candidate.IndexNumber)
+                && candidate.Name.Equals(oldIndex.Name, StringComparison.OrdinalIgnoreCase));
+            newIndex ??= replacement.Indexes.FirstOrDefault(candidate =>
+                !usedReplacementIndexes.Contains(candidate.IndexNumber)
+                && candidate.IsPrimaryKey == oldIndex.IsPrimaryKey
+                && candidate.IndexData.IsUnique == oldIndex.IndexData.IsUnique
+                && candidate.IsForeignKey == oldIndex.IsForeignKey
+                && candidate.IndexData.Columns.Select(c => c.Column.Name)
+                    .SequenceEqual(oldIndex.IndexData.Columns.Select(c => c.Column.Name),
+                        StringComparer.OrdinalIgnoreCase));
+            if (newIndex != null)
+            {
+                map[oldIndex.IndexNumber] = newIndex.IndexNumber;
+                usedReplacementIndexes.Add(newIndex.IndexNumber);
+            }
+        }
+        return map;
+    }
+
     private static void ValidateIndexBuilder(Table table, IndexBuilder builder)
     {
         if (string.IsNullOrWhiteSpace(builder.Name))
@@ -198,6 +235,7 @@ internal static class IndexMutator
         if (column.Required) builder.WithRequired();
         if (column.CompressedUnicode) builder.WithCompressedUnicode();
         if (column.TextSortOrder is TextSortOrder sortOrder) builder.WithTextSortOrder(sortOrder);
+        if (!string.IsNullOrWhiteSpace(column.DefaultValue)) builder.WithDefault(column.DefaultValue!);
         return builder;
     }
 
@@ -212,6 +250,11 @@ internal static class IndexMutator
         else if (index.IndexData.IsUnique) builder.WithUnique();
         if (index.IndexData.IsRequired) builder.WithRequired();
         if (index.IndexData.ShouldIgnoreNulls) builder.WithIgnoreNulls();
+        if (index.IsForeignKey)
+        {
+            builder.WithForeignKey(index.RelatedIndexNumber, index.RelatedTablePageNumber,
+                index.CascadeUpdates, index.CascadeDeletes);
+        }
         return builder;
     }
 }

@@ -631,7 +631,7 @@ public static class AccessDml
 
     private static object?[] BuildInsertRow(Table table, List<string>? columns, List<object?> values)
     {
-        var row = new object?[table.Columns.Count];
+        var row = Enumerable.Repeat<object?>(Table.MissingValue, table.Columns.Count).ToArray();
         if (columns == null)
         {
             if (values.Count > table.Columns.Count)

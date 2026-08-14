@@ -13,6 +13,7 @@ namespace UCanAccess;
 public sealed class UCanAccessTransaction : DbTransaction
 {
     private readonly UCanAccessConnection _connection;
+    private readonly IAtomicFileSystem _fileSystem;
     private readonly IsolationLevel _isolationLevel;
     private readonly List<(string Sql, IReadOnlyList<object?>? Parameters)> _pending = new();
     private readonly List<SavepointState> _savepoints = new();
@@ -24,10 +25,12 @@ public sealed class UCanAccessTransaction : DbTransaction
     private readonly long _sourceLength;
     private readonly long _sourceWriteTicks;
 
-    internal UCanAccessTransaction(UCanAccessConnection connection, IsolationLevel isolationLevel)
+    internal UCanAccessTransaction(UCanAccessConnection connection, IsolationLevel isolationLevel,
+        IAtomicFileSystem fileSystem)
     {
         _connection = connection;
         _isolationLevel = isolationLevel;
+        _fileSystem = fileSystem;
         (_sourceLength, _sourceWriteTicks) = connection.GetSourceFingerprint();
     }
 
@@ -46,6 +49,20 @@ public sealed class UCanAccessTransaction : DbTransaction
         {
             Check();
             return _stagedMirror ?? _connection.Mirror;
+        }
+    }
+
+    /// <summary>
+    /// Database snapshot used for saved-query expansion. Before the first write
+    /// this is the connection database; after staging it is the private
+    /// transaction copy, so newly-created QueryDefs are visible to reads.
+    /// </summary>
+    internal File.Database QueryDatabase
+    {
+        get
+        {
+            Check();
+            return _stagedDatabase ?? _connection.AccessDatabase;
         }
     }
 
@@ -129,7 +146,7 @@ public sealed class UCanAccessTransaction : DbTransaction
             {
                 try
                 {
-                    System.IO.File.Delete(stagedPath);
+                    _fileSystem.Delete(stagedPath);
                 }
                 catch
                 {
@@ -162,7 +179,15 @@ public sealed class UCanAccessTransaction : DbTransaction
             "." + System.IO.Path.GetFileNameWithoutExtension(stagedPath) +
             ".ucanaccess-savepoint-" + Guid.NewGuid().ToString("N") +
             System.IO.Path.GetExtension(stagedPath));
-        System.IO.File.Copy(stagedPath, snapshotPath, true);
+        try
+        {
+            _fileSystem.Copy(stagedPath, snapshotPath, true);
+        }
+        catch
+        {
+            try { _fileSystem.Delete(snapshotPath); } catch { }
+            throw;
+        }
 
         for (int i = _savepoints.Count - 1; i >= 0; i--)
         {
@@ -196,7 +221,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         DisposeStage(keepFile: true);
         try
         {
-            System.IO.File.Copy(savepoint.Path, stagedPath, true);
+            _fileSystem.Copy(savepoint.Path, stagedPath, true);
             _stagedDatabase = _connection.OpenDatabaseFile(stagedPath, readOnly: false);
             _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase, useConfiguredStorage: false);
             _stagedPath = stagedPath;
@@ -246,9 +271,9 @@ public sealed class UCanAccessTransaction : DbTransaction
             sourceDirectory,
             "." + System.IO.Path.GetFileNameWithoutExtension(srcPath) +
             ".ucanaccess-tx-" + Guid.NewGuid().ToString("N") + extension);
-        System.IO.File.Copy(srcPath, copyPath, true);
         try
         {
+            _fileSystem.Copy(srcPath, copyPath, true);
             _stagedDatabase = _connection.OpenDatabaseFile(copyPath, readOnly: false);
             _stagedMirror = _connection.CreateMirrorFor(_stagedDatabase, useConfiguredStorage: false);
             _stagedPath = copyPath;
@@ -261,7 +286,7 @@ public sealed class UCanAccessTransaction : DbTransaction
             _stagedDatabase = null;
             try
             {
-                System.IO.File.Delete(copyPath);
+                _fileSystem.Delete(copyPath);
             }
             catch
             {
@@ -284,7 +309,7 @@ public sealed class UCanAccessTransaction : DbTransaction
         {
             try
             {
-                System.IO.File.Delete(path);
+                _fileSystem.Delete(path);
             }
             catch
             {
@@ -353,11 +378,11 @@ public sealed class UCanAccessTransaction : DbTransaction
         _savepoints.Clear();
     }
 
-    private static void DeleteFile(string path)
+    private void DeleteFile(string path)
     {
         try
         {
-            System.IO.File.Delete(path);
+                _fileSystem.Delete(path);
         }
         catch
         {

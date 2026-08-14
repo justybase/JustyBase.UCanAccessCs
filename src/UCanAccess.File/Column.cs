@@ -44,6 +44,7 @@ public sealed class Column
         Calculated = (extFlags & CalculatedExtFlagMask) != 0;
         CompressedUnicode = (extFlags & CompressedUnicodeExtFlagMask) != 0;
         Required = table.Database.IsColumnRequired(table.TableDefPageNumber, name);
+        DefaultValue = table.Database.GetColumnDefault(table.TableDefPageNumber, name);
 
         VarLenTableIndex = ReadShort(buffer, offset + format.OffsetColumnVariableTableIndex);
         FixedDataOffset = ReadShort(buffer, offset + format.OffsetColumnFixedDataOffset);
@@ -126,6 +127,9 @@ public sealed class Column
 
     /// <summary>whether Access rejects NULL values for this column</summary>
     public bool Required { get; internal set; }
+
+    /// <summary>the Access SQL expression used when an INSERT omits this column</summary>
+    public string? DefaultValue { get; }
 
     public bool Calculated { get; }
 

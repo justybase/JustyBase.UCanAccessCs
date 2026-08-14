@@ -247,7 +247,19 @@ public sealed class MirrorReader : DbDataReader
 
     public override bool NextResult() => _inner.NextResult();
 
+    public override Task<bool> NextResultAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextResult());
+    }
+
     public override bool Read() => _inner.Read();
+
+    public override Task<bool> ReadAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Read());
+    }
 
     public override DataTable? GetSchemaTable()
     {

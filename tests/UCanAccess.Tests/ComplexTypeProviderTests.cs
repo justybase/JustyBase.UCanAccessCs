@@ -69,4 +69,36 @@ public sealed class ComplexTypeProviderTests
             System.IO.File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Insert_omitting_complex_columns_stores_null_values()
+    {
+        string source = Fixture("generated/complex.accdb");
+        string path = Path.Combine(Path.GetTempPath(), $"uca-complex-provider-null-{Guid.NewGuid():N}.accdb");
+        System.IO.File.Copy(source, path);
+        try
+        {
+            using var connection = new UCanAccessConnection
+            {
+                ConnectionString = $"Data Source={path};Read Only=false"
+            };
+            connection.Open();
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "INSERT INTO ComplexFixture (ID) VALUES (2)";
+                Assert.Equal(1, command.ExecuteNonQuery());
+            }
+
+            using var verify = connection.CreateCommand();
+            verify.CommandText = "SELECT Tags, Files FROM ComplexFixture WHERE ID = 2";
+            using var reader = verify.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.True(reader.IsDBNull(0));
+            Assert.True(reader.IsDBNull(1));
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
 }

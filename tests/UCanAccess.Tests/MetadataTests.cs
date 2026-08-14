@@ -112,6 +112,19 @@ public class MetadataTests
     }
 
     [Fact]
+    public void GetSchema_table_type_restriction_filters_views_and_tables()
+    {
+        using var conn = Open("accessLike.mdb");
+        DataTable views = conn.GetSchema("Tables", new string?[] { null, null, null, "VIEW" });
+        Assert.NotEmpty(views.Rows);
+        Assert.All(views.AsEnumerable(), row => Assert.Equal("VIEW", row.Field<string>("TABLE_TYPE")));
+
+        DataTable tables = conn.GetSchema("Tables", new string?[] { null, null, null, "TABLE" });
+        Assert.NotEmpty(tables.Rows);
+        Assert.All(tables.AsEnumerable(), row => Assert.Equal("TABLE", row.Field<string>("TABLE_TYPE")));
+    }
+
+    [Fact]
     public void Result_set_meta_data_reports_boolean_type()
     {
         using var conn = Open("sqljoin.mdb");

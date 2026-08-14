@@ -585,7 +585,12 @@ internal sealed class IndexData
             // nothing to do
             return change;
         }
-        if (nullCount > 0 && (BackingPrimaryKey || IsRequired))
+        // Complex/attachment columns use required supporting indexes for their
+        // child-table bookkeeping, but an omitted complex value is represented by
+        // a null parent pointer and legitimately has no child rows.  Do not turn
+        // that normal empty state into a NOT NULL violation.
+        bool complexSupportingIndex = _columns.Any(column => column.Column.Type == DataType.ComplexType);
+        if (nullCount > 0 && (BackingPrimaryKey || (IsRequired && !complexSupportingIndex)))
         {
             throw new DatabaseException($"Null value found in row [{string.Join(",", row)}] for primary key or required index");
         }

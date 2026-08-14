@@ -22,11 +22,17 @@ internal static class FkEnforcer
                 continue;
             }
             EnsureComplete(rel);
-            if (AreNull(rel.ToColumns, values))
+            if (AnyNull(rel.ToColumns, values))
             {
                 continue;
             }
-            if (!HasRow(rel.FromTable, rel.FromColumns, ValuesAt(rel.ToColumns, values)))
+            object?[] key = ValuesAt(rel.ToColumns, values);
+            if (rel.IsOneToOne && HasRow(rel.ToTable, rel.ToColumns, key))
+            {
+                throw new DatabaseException(
+                    $"Adding new row to '{table.Name}' violates one-to-one relationship '{rel.Name}'.");
+            }
+            if (!HasRow(rel.FromTable, rel.FromColumns, key))
             {
                 throw new DatabaseException(
                     $"Adding new row to '{table.Name}' violates foreign key constraint '{rel.Name}' (missing referenced row in '{rel.FromTable.Name}').");
@@ -110,11 +116,17 @@ internal static class FkEnforcer
                 {
                     continue;
                 }
-                if (AreNull(rel.ToColumns, newValues))
+                if (AnyNull(rel.ToColumns, newValues))
                 {
                     continue;
                 }
-                if (!HasRow(rel.FromTable, rel.FromColumns, ValuesAt(rel.ToColumns, newValues)))
+                object?[] key = ValuesAt(rel.ToColumns, newValues);
+                if (rel.IsOneToOne && HasRow(rel.ToTable, rel.ToColumns, key))
+                {
+                    throw new DatabaseException(
+                        $"Updating row in '{table.Name}' violates one-to-one relationship '{rel.Name}'.");
+                }
+                if (!HasRow(rel.FromTable, rel.FromColumns, key))
                 {
                     throw new DatabaseException(
                         $"Updating row in '{table.Name}' violates foreign key constraint '{rel.Name}' (missing referenced row in '{rel.FromTable.Name}').");
@@ -166,17 +178,8 @@ internal static class FkEnforcer
     private static bool IsSameTable(Table a, Table b)
         => a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase);
 
-    private static bool AreNull(Column[] columns, object?[] values)
-    {
-        foreach (Column col in columns)
-        {
-            if (values[col.ColumnIndex] is not null and not DBNull)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
+    private static bool AnyNull(Column[] columns, object?[] values)
+        => columns.Any(col => values[col.ColumnIndex] is null or DBNull);
 
     private static bool ColumnsChanged(Column[] columns, object?[] oldValues, object?[] newValues)
     {

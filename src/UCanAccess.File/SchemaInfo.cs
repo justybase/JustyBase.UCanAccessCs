@@ -17,7 +17,8 @@ public sealed class IndexColumnInfo
 /// <summary>a logical index of a table (for metadata APIs)</summary>
 public sealed class IndexInfo
 {
-    internal IndexInfo(string name, IReadOnlyList<IndexColumnInfo> columns, bool unique, bool primaryKey, bool required, bool ignoreNulls)
+    internal IndexInfo(string name, IReadOnlyList<IndexColumnInfo> columns, bool unique, bool primaryKey,
+        bool required, bool ignoreNulls, bool foreignKey)
     {
         Name = name;
         Columns = columns;
@@ -25,6 +26,7 @@ public sealed class IndexInfo
         PrimaryKey = primaryKey;
         Required = required;
         IgnoreNulls = ignoreNulls;
+        ForeignKey = foreignKey;
     }
 
     public string Name { get; }
@@ -38,4 +40,6 @@ public sealed class IndexInfo
     public bool Required { get; }
 
     public bool IgnoreNulls { get; }
+
+    public bool ForeignKey { get; }
 }

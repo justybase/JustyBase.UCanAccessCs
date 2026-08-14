@@ -459,6 +459,431 @@ public class SqlDdlTests
     }
 
     [Fact]
+    public void Create_table_accepts_named_primary_and_unique_constraints()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_named (id LONG, code TEXT(20), CONSTRAINT pk_named PRIMARY KEY (id), CONSTRAINT uq_named UNIQUE (code))");
+            var indexes = ((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("t_named");
+            Assert.Contains(indexes, index => index.Name == "pk_named" && index.PrimaryKey);
+            Assert.Contains(indexes, index => index.Name == "uq_named" && index.Unique);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Defaults_are_persisted_and_used_for_omitted_insert_columns()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE TABLE t_defaults (id LONG, label TEXT(20) DEFAULT 'fallback', keyword TEXT(20) DEFAULT 'not', amount LONG DEFAULT (3))");
+                Exec(conn, "INSERT INTO t_defaults (id) VALUES (1)");
+                Exec(conn, "INSERT INTO t_defaults (id, label, amount) VALUES (2, NULL, NULL)");
+
+                Assert.Equal("fallback", Scalar(conn, "SELECT label FROM t_defaults WHERE id = 1"));
+                Assert.Equal("not", Scalar(conn, "SELECT keyword FROM t_defaults WHERE id = 1"));
+                Assert.Equal(3L, Scalar(conn, "SELECT amount FROM t_defaults WHERE id = 1"));
+                Assert.Null(Scalar(conn, "SELECT label FROM t_defaults WHERE id = 2"));
+                Assert.Equal("'fallback'", ((UCanAccessConnection)conn).AccessDatabase
+                    .GetTable("t_defaults")!.Columns.Single(c => c.Name == "label").DefaultValue);
+                DataTable schema = conn.GetSchema("Columns",
+                    new[] { null, null, "t_defaults", "label" });
+                Assert.Equal("'fallback'", schema.Rows[0]["COLUMN_DEFAULT"]);
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Assert.Equal("fallback", Scalar(reopened, "SELECT label FROM t_defaults WHERE id = 1"));
+            }
+            if (JavaAvailable() && FindJar("jackcess-5.1.5.jar") != null
+                && Directory.Exists(Path.Combine(FindRepoRoot(), "tools", "JavaOracle", "classes")))
+            {
+                Assert.Contains("t_defaults", RunDbDump(tmp));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Access_default_literal_syntax_is_applied_to_omitted_columns()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_access_defaults (id LONG, label TEXT(20) DEFAULT \"rrr\", enabled YESNO DEFAULT No)");
+            Exec(conn, "INSERT INTO t_access_defaults (id) VALUES (1)");
+            Assert.Equal("rrr", Scalar(conn, "SELECT label FROM t_access_defaults WHERE id = 1"));
+            Assert.Equal(false, Scalar(conn, "SELECT enabled FROM t_access_defaults WHERE id = 1"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Unary_numeric_defaults_roundtrip_without_whitespace_between_sign_and_value()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_signed_defaults (id LONG, negative LONG DEFAULT -1, positive LONG DEFAULT +1)");
+            Exec(conn, "INSERT INTO t_signed_defaults (id) VALUES (1)");
+            Assert.Equal(-1L, Scalar(conn, "SELECT negative FROM t_signed_defaults WHERE id = 1"));
+            Assert.Equal(1L, Scalar(conn, "SELECT positive FROM t_signed_defaults WHERE id = 1"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Add_required_column_with_default_backfills_existing_rows()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_add_default (id LONG)");
+            Exec(conn, "INSERT INTO t_add_default (id) VALUES (1)");
+            Exec(conn, "ALTER TABLE t_add_default ADD COLUMN note TEXT(20) DEFAULT 'added' NOT NULL");
+            Assert.Equal("added", Scalar(conn, "SELECT note FROM t_add_default WHERE id = 1"));
+            Assert.True(((UCanAccessConnection)conn).AccessDatabase.GetTable("t_add_default")!
+                .Columns.Single(c => c.Name == "note").Required);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_table_add_and_drop_foreign_key_enforces_relationship()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "INSERT INTO fk_parent (id) VALUES (1)");
+            Exec(conn, "INSERT INTO fk_child (id, parent_id) VALUES (10, 1)");
+            Exec(conn, "ALTER TABLE fk_child ADD CONSTRAINT fk_child_parent FOREIGN KEY (parent_id) REFERENCES fk_parent (id) ON DELETE CASCADE");
+            Exec(conn, "ALTER TABLE fk_child ADD COLUMN note TEXT(20)");
+
+            Assert.ThrowsAny<Exception>(() => Exec(conn,
+                "INSERT INTO fk_child (id, parent_id) VALUES (11, 99)"));
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_child_parent" && relationship.CascadeDeletes);
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_child"),
+                index => index.Name == "fk_child_parent" && index.ForeignKey);
+
+            Exec(conn, "DELETE FROM fk_parent WHERE id = 1");
+            Assert.Equal(0L, Scalar(conn, "SELECT count(*) FROM fk_child"));
+            if (JavaAvailable() && FindJar("jackcess-5.1.5.jar") != null
+                && Directory.Exists(Path.Combine(FindRepoRoot(), "tools", "JavaOracle", "classes")))
+            {
+                Assert.Contains("fk_child_parent", RunDbDump(tmp));
+            }
+            Exec(conn, "ALTER TABLE fk_child DROP CONSTRAINT fk_child_parent");
+            Assert.Empty(((UCanAccessConnection)conn).AccessDatabase.GetRelationships());
+            Exec(conn, "ALTER TABLE fk_child DROP COLUMN parent_id");
+            Assert.DoesNotContain(((UCanAccessConnection)conn).AccessDatabase.GetTable("fk_child")!.Columns,
+                column => column.Name.Equals("parent_id", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Drop_constraint_must_belong_to_the_alter_table_target()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_target_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_target_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "ALTER TABLE fk_target_child ADD CONSTRAINT fk_target FOREIGN KEY (parent_id) REFERENCES fk_target_parent (id)");
+
+            Assert.ThrowsAny<Exception>(() => Exec(conn,
+                "ALTER TABLE unrelated_table DROP CONSTRAINT fk_target"));
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_target");
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Create_table_accepts_foreign_key_constraint()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_create_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "INSERT INTO fk_create_parent (id) VALUES (1)");
+            Exec(conn, "CREATE TABLE fk_create_child (id LONG PRIMARY KEY, parent_id LONG, CONSTRAINT fk_create FOREIGN KEY (parent_id) REFERENCES fk_create_parent (id) ON DELETE CASCADE)");
+
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_create");
+            Assert.ThrowsAny<Exception>(() => Exec(conn,
+                "INSERT INTO fk_create_child (id, parent_id) VALUES (2, 99)"));
+            Exec(conn, "INSERT INTO fk_create_child (id, parent_id) VALUES (3, 1)");
+            Exec(conn, "DELETE FROM fk_create_parent WHERE id = 1");
+            Assert.Equal(0L, Scalar(conn, "SELECT count(*) FROM fk_create_child"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Failed_create_table_foreign_key_is_rolled_back()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Assert.ThrowsAny<Exception>(() => Exec(conn,
+                "CREATE TABLE fk_failed (id LONG, parent_id LONG, CONSTRAINT fk_missing FOREIGN KEY (parent_id) REFERENCES no_such_parent (id))"));
+            Assert.DoesNotContain("fk_failed",
+                ((UCanAccessConnection)conn).AccessDatabase.GetTableNames());
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Parent_definition_replacement_retargets_child_foreign_key_index()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE TABLE fk_retarget_parent (id LONG PRIMARY KEY)");
+                Exec(conn, "CREATE TABLE fk_retarget_child (id LONG PRIMARY KEY, parent_id LONG)");
+                Exec(conn, "INSERT INTO fk_retarget_parent (id) VALUES (1)");
+                Exec(conn, "ALTER TABLE fk_retarget_child ADD CONSTRAINT fk_retarget FOREIGN KEY (parent_id) REFERENCES fk_retarget_parent (id)");
+                Exec(conn, "ALTER TABLE fk_retarget_parent ADD COLUMN note TEXT(20)");
+                Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_retarget_child"),
+                    index => index.ForeignKey);
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Exec(reopened, "INSERT INTO fk_retarget_child (id, parent_id) VALUES (1, 1)");
+                Assert.ThrowsAny<Exception>(() => Exec(reopened,
+                    "INSERT INTO fk_retarget_child (id, parent_id) VALUES (2, 99)"));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Shared_foreign_key_index_survives_until_last_relationship_is_dropped()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_shared_parent1 (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_shared_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "INSERT INTO fk_shared_parent1 (id) VALUES (1)");
+            Exec(conn, "ALTER TABLE fk_shared_child ADD CONSTRAINT fk_shared_one FOREIGN KEY (parent_id) REFERENCES fk_shared_parent1 (id)");
+            Exec(conn, "ALTER TABLE fk_shared_child ADD CONSTRAINT fk_shared_two FOREIGN KEY (parent_id) REFERENCES fk_shared_parent1 (id)");
+
+            Exec(conn, "ALTER TABLE fk_shared_child DROP CONSTRAINT fk_shared_one");
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_shared_two");
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_shared_child"),
+                index => index.ForeignKey);
+
+            Exec(conn, "ALTER TABLE fk_shared_child DROP CONSTRAINT fk_shared_two");
+            Assert.DoesNotContain(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_shared_child"),
+                index => index.ForeignKey);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Dropping_parent_removes_generated_child_foreign_key_index()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_drop_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_drop_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "ALTER TABLE fk_drop_child ADD CONSTRAINT fk_drop FOREIGN KEY (parent_id) REFERENCES fk_drop_parent (id)");
+            Exec(conn, "DROP TABLE fk_drop_parent");
+            Assert.DoesNotContain("fk_drop_parent",
+                ((UCanAccessConnection)conn).AccessDatabase.GetTableNames());
+            Assert.Empty(((UCanAccessConnection)conn).AccessDatabase.GetRelationships());
+            Assert.DoesNotContain(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_drop_child"),
+                index => index.ForeignKey);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Dropping_one_of_two_parent_keys_removes_only_its_foreign_index()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE fk_multi_parent1 (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_multi_parent2 (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE fk_multi_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "ALTER TABLE fk_multi_child ADD CONSTRAINT fk_multi_one FOREIGN KEY (parent_id) REFERENCES fk_multi_parent1 (id)");
+            Exec(conn, "ALTER TABLE fk_multi_child ADD CONSTRAINT fk_multi_two FOREIGN KEY (parent_id) REFERENCES fk_multi_parent2 (id)");
+
+            Exec(conn, "DROP TABLE fk_multi_parent1");
+            Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_multi_two");
+            Assert.DoesNotContain(((UCanAccessConnection)conn).AccessDatabase.GetRelationships(),
+                relationship => relationship.Name == "fk_multi_one");
+            Assert.Single(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("fk_multi_child"),
+                index => index.ForeignKey);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Self_referencing_relationship_can_drop_its_retargeted_supporting_index()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE TABLE fk_self (id LONG PRIMARY KEY, parent_id LONG)");
+                Exec(conn, "ALTER TABLE fk_self ADD CONSTRAINT fk_self_parent FOREIGN KEY (parent_id) REFERENCES fk_self (id)");
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Exec(reopened, "ALTER TABLE fk_self DROP CONSTRAINT fk_self_parent");
+                Assert.DoesNotContain(((UCanAccessConnection)reopened).AccessDatabase.GetIndexInfo("fk_self"),
+                    index => index.ForeignKey);
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Parent_index_number_shift_retargets_child_foreign_key_metadata()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE TABLE fk_index_parent (id LONG, code LONG)");
+                Exec(conn, "CREATE INDEX fk_index_extra ON fk_index_parent (id)");
+                Exec(conn, "CREATE UNIQUE INDEX fk_index_key ON fk_index_parent (code)");
+                Exec(conn, "CREATE TABLE fk_index_child (id LONG PRIMARY KEY, code LONG)");
+                Exec(conn, "ALTER TABLE fk_index_child ADD CONSTRAINT fk_index_rel FOREIGN KEY (code) REFERENCES fk_index_parent (code)");
+                Exec(conn, "DROP INDEX fk_index_extra ON fk_index_parent");
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Exec(reopened, "INSERT INTO fk_index_parent (id, code) VALUES (1, 7)");
+                Exec(reopened, "INSERT INTO fk_index_child (id, code) VALUES (1, 7)");
+                Exec(reopened, "ALTER TABLE fk_index_child DROP CONSTRAINT fk_index_rel");
+                Assert.DoesNotContain(((UCanAccessConnection)reopened).AccessDatabase.GetIndexInfo("fk_index_child"),
+                    index => index.ForeignKey);
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_columns_preserves_autonumber_values_and_counter()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE TABLE t_auto_ddl (id COUNTER PRIMARY KEY, val TEXT(20))");
+                Exec(conn, "INSERT INTO t_auto_ddl (val) VALUES ('kept')");
+                Exec(conn, "INSERT INTO t_auto_ddl (val) VALUES ('deleted')");
+                Exec(conn, "DELETE FROM t_auto_ddl WHERE id = 2");
+
+                Exec(conn, "ALTER TABLE t_auto_ddl ADD COLUMN note TEXT(20)");
+                Exec(conn, "UPDATE t_auto_ddl SET note = 'after-add' WHERE id = 1");
+                Exec(conn, "ALTER TABLE t_auto_ddl DROP COLUMN note");
+                Exec(conn, "INSERT INTO t_auto_ddl (val) VALUES ('next')");
+
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT id, val FROM t_auto_ddl ORDER BY id";
+                using var reader = cmd.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal(1L, reader.GetInt64(0));
+                Assert.Equal("kept", reader.GetString(1));
+                Assert.True(reader.Read());
+                Assert.Equal(3L, reader.GetInt64(0));
+                Assert.Equal("next", reader.GetString(1));
+                Assert.False(reader.Read());
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Exec(reopened, "INSERT INTO t_auto_ddl (val) VALUES ('reopened')");
+                Assert.Equal(4L, Scalar(reopened, "SELECT id FROM t_auto_ddl WHERE val = 'reopened'"));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Alter_table_rename_updates_the_catalog_and_preserves_rows()
     {
         string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
@@ -529,6 +954,35 @@ public class SqlDdlTests
             }
 
             Assert.Equal(before, System.IO.File.ReadAllBytes(tmp));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Create_and_drop_view_roundtrip_through_access_catalog()
+    {
+        string tmp = TempCopy(Fixture("accessLike.mdb"));
+        try
+        {
+            using (var conn = OpenWritable(tmp))
+            {
+                Exec(conn, "CREATE VIEW q_managed AS SELECT Campo2 FROM t_like2 WHERE Campo2 LIKE 'd*'");
+                Assert.Equal(2L, Scalar(conn, "SELECT COUNT(*) FROM q_managed"));
+                DataTable views = conn.GetSchema("Views");
+                Assert.Contains(views.AsEnumerable(), row =>
+                    string.Equals(row.Field<string>("TABLE_NAME"), "q_managed",
+                        StringComparison.OrdinalIgnoreCase));
+            }
+
+            using (var reopened = OpenWritable(tmp))
+            {
+                Assert.Equal(2L, Scalar(reopened, "SELECT COUNT(*) FROM q_managed"));
+                Exec(reopened, "DROP VIEW q_managed");
+                Assert.ThrowsAny<Exception>(() => Scalar(reopened, "SELECT COUNT(*) FROM q_managed"));
+            }
         }
         finally
         {

@@ -114,6 +114,15 @@ public sealed class QueryDef
 
     public IReadOnlyList<QueryRow> Rows { get; }
 
+    /// <summary>whether the saved SELECT declares one or more parameters</summary>
+    public bool HasParameters => Rows.Any(row => row.Attribute == ParameterAttribute);
+
+    /// <summary>declared parameter names in Access catalog order</summary>
+    public IReadOnlyList<string> ParameterNames
+        => Rows.Where(row => row.Attribute == ParameterAttribute && row.Name1 != null)
+            .Select(row => row.Name1!)
+            .ToArray();
+
     private static QueryType? TypeFromValue(short value) => value switch
     {
         1 => QueryType.Select,
@@ -221,7 +230,8 @@ public sealed class QueryDef
         {
             sb.Append("DISTINCTROW ");
         }
-        else if (HasFlag(flagRow, TopSelectType))
+
+        if (HasFlag(flagRow, TopSelectType))
         {
             sb.Append("TOP ");
             sb.Append(flagRow!.Name1 ?? "1");
