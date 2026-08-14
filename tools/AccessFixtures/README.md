@@ -15,6 +15,22 @@ The generated file is consumed by `ComplexTypeTests`. The runtime provider does
 not require Access or ACE; it reads and writes the generated flat child tables
 directly.
 
+## Version-history fixture
+
+To create an append-only complex-text field (the Access version-history shape):
+
+```powershell
+pwsh tools/AccessFixtures/Generate-VersionFixture.ps1 `
+  -OutputPath tests/fixtures/generated/version.accdb
+$env:UCANACCESS_VERSION_FIXTURE = (Resolve-Path tests/fixtures/generated/version.accdb)
+dotnet test tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj `
+  --filter FullyQualifiedName~VersionHistoryTests
+```
+
+The generator is optional and requires 32-bit/64-bit Microsoft Access matching
+the PowerShell process. The provider itself only consumes the resulting
+`MSysComplexType_*` rows and does not automate Access.
+
 ## Encrypted ACCDB fixture
 
 `Generate-EncryptedFixture.ps1` creates a modern password-encrypted `.accdb`

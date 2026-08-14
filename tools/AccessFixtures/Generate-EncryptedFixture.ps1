@@ -63,11 +63,20 @@ CREATE TABLE CryptoFixture (
 
     $access = New-Object -ComObject Access.Application
     $engine = $access.DBEngine
-    # DAO dbEncrypt is 2.  Keep the flag and password arguments explicit so
-    # this fixture cannot silently become an unencrypted ACCDB when Access
-    # changes its default compacting behavior.
+    # DAO dbEncrypt is 2.  Request it first, but modern Access rejects that
+    # legacy flag for ACCDB files.  In that case the documented DstLocale
+    # password form is the authoritative encryption request for ACCDB.
     $dbEncrypt = 2
-    $engine.CompactDatabase($plain, $encrypted, ";pwd=$Password", $dbEncrypt, ";pwd=$Password")
+    try {
+        $engine.CompactDatabase($plain, $encrypted, ";pwd=$Password", $dbEncrypt, ";pwd=$Password")
+    }
+    catch {
+        if ([IO.File]::Exists($encrypted)) {
+            Remove-Item -LiteralPath $encrypted -Force
+        }
+        Write-Warning 'Access rejected dbEncrypt for ACCDB; retrying with the DstLocale password form.'
+        $engine.CompactDatabase($plain, $encrypted, ";pwd=$Password", 0, ";pwd=$Password")
+    }
     Release-ComObject $engine
     $access.Quit(2)
     Release-ComObject $access
