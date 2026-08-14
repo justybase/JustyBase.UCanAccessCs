@@ -56,6 +56,32 @@ jobs:
       - name: Test pure .NET Access encryption codec
         run: dotnet test tests/UCanAccess.AccessCrypto.Tests/UCanAccess.AccessCrypto.Tests.csproj -c Release --no-build --no-restore
 
+      # Packaging smoke test only.  Release publication remains a separate,
+      # explicit workflow and is intentionally not performed by CI.
+      - name: Pack and inspect local NuGet artifacts
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:GITHUB_WORKSPACE 'artifacts/packages'
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore --output $output
+          dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore --output $output
+          dotnet pack src/UCanAccess.AccessCrypto/UCanAccess.AccessCrypto.csproj -c Release --no-build --no-restore --output $output
+          $packages = @(Get-ChildItem -LiteralPath $output -Filter '*.nupkg')
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three local packages, found $($packages.Count)."
+          }
+          $expected = @(
+            'JustyBase.UCanAccessCs',
+            'JustyBase.UCanAccess.File',
+            'JustyBase.UCanAccess.AccessCrypto'
+          )
+          foreach ($id in $expected) {
+            if (-not ($packages.Name -match "^$([regex]::Escape($id))\.") ) {
+              throw "Package '$id' was not produced."
+            }
+          }
+
       - name: Upload coverage
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v6
@@ -119,6 +145,22 @@ jobs:
 
       - name: Build
         run: dotnet build UCanAccess.slnx -c Release --no-restore
+
+      - name: Generate COM complex-field fixtures
+        shell: pwsh
+        run: |
+          pwsh -File tools/AccessFixtures/Generate-ComplexFixture.ps1 `
+            -OutputPath tests/fixtures/generated/complex.accdb
+          pwsh -File tools/AccessFixtures/Generate-VersionFixture.ps1 `
+            -OutputPath tests/fixtures/generated/version.accdb
+
+      - name: Verify managed complex-field round-trips
+        env:
+          UCANACCESS_VERSION_FIXTURE: ${{ github.workspace }}/tests/fixtures/generated/version.accdb
+        run: >-
+          dotnet test tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj
+          -c Release --no-build --no-restore
+          --filter "FullyQualifiedName~ComplexTypeTests|FullyQualifiedName~VersionHistoryTests"
 
       - name: Verify encrypted ACCDB interoperability
         env:
