@@ -7,6 +7,8 @@ namespace UCanAccess.File;
 /// </summary>
 public sealed class Table
 {
+    /// <summary>Marker used by the SQL layer for an omitted INSERT column.</summary>
+    internal static readonly object MissingValue = new();
     private const short OffsetMask = 0x1FFF;
     private const short DeletedRowMask = unchecked((short)0x8000);
     private const short OverflowRowMask = (short)0x4000;
@@ -248,6 +250,18 @@ public sealed class Table
     /// Adds a row of values to the table and writes it to the database file.
     /// </summary>
     public object?[] AddRow(object?[] values)
+        => AddRow(values, preserveAutoNumbers: false);
+
+    /// <summary>
+    /// Adds a row while preserving values read from an existing table during a
+    /// DDL migration.  Normal inserts intentionally always generate Access
+    /// AutoNumber values; migration replay is the one case where an existing
+    /// AutoNumber must be written back verbatim.
+    /// </summary>
+    internal object?[] AddRowPreservingAutoNumbers(object?[] values)
+        => AddRow(values, preserveAutoNumbers: true);
+
+    private object?[] AddRow(object?[] values, bool preserveAutoNumbers)
     {
         if (_database.IsReadOnly)
         {
@@ -255,15 +269,15 @@ public sealed class Table
         }
         if (values.Length < _columns.Count)
         {
-            var padded = new object?[_columns.Count];
+            var padded = Enumerable.Repeat<object?>(MissingValue, _columns.Count).ToArray();
             Array.Copy(values, padded, values.Length);
             values = padded;
         }
-        List<ComplexWrite> complexWrites = PrepareComplexValues(values, null, null, null);
         JetFormat format = Format;
         PageChannel pageChannel = _database.PageChannel;
 
         pageChannel.StartWrite();
+        var complexWrites = new List<ComplexWrite>();
         var newLongValuePages = new HashSet<int>();
         HashSet<int> existingLongValuePages = new();
         int previousAutoNumber = _lastLongAutoNumber;
@@ -274,8 +288,13 @@ public sealed class Table
         {
             values = NormalizeValues(values);
 
-            HandleAutoNumbers(values);
+            HandleDefaultValues(values);
+            HandleAutoNumbers(values, preserveAutoNumbers);
             ValidateRequiredValues(values);
+            // Resolve omitted/defaulted values before complex-field handling.  The
+            // MissingValue marker is an internal SQL-layer sentinel and must never
+            // be interpreted as a CLR complex value.
+            complexWrites = PrepareComplexValues(values, null, null, null);
             if (HasLongValueColumns)
             {
                 EnsureLongValuePageReferences();
@@ -381,6 +400,129 @@ public sealed class Table
             WriteComplexChildren(complexWrites, replaceExisting: false);
         }
         return committedValues ?? values;
+    }
+
+    /// <summary>
+    /// Preserves a previously allocated AutoNumber counter when a rebuilt table
+    /// contains gaps or deleted rows and therefore cannot infer the old counter
+    /// from the values that were replayed.
+    /// </summary>
+    internal void PreserveLastLongAutoNumber(int value)
+    {
+        if (value <= _lastLongAutoNumber)
+        {
+            return;
+        }
+        if (_database.IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
+
+        PageChannel pageChannel = _database.PageChannel;
+        pageChannel.StartWrite();
+        try
+        {
+            _lastLongAutoNumber = value;
+            UpdateTableDefinition(0);
+        }
+        finally
+        {
+            pageChannel.FinishWrite();
+        }
+    }
+
+    /// <summary>
+    /// Retargets foreign-key index metadata which points at a replaced parent
+    /// table-definition page.  The logical index block may span the table
+    /// definition page chain, so the update is mapped back to its physical pages
+    /// instead of assuming the definition fits on page one.
+    /// </summary>
+    internal bool RetargetForeignKeyIndexes(int oldParentPage, int newParentPage,
+        IReadOnlyDictionary<int, int>? parentIndexMap = null)
+    {
+        var indexes = _indexes
+            .Where(index => index.IsForeignKey
+                && index.RelatedTablePageNumber == oldParentPage)
+            .ToArray();
+        if (indexes.Length == 0)
+        {
+            return false;
+        }
+
+        var definitionPages = new List<int> { TableDefPageNumber };
+        int nextPage = ByteUtil.GetIntLittleEndian(_tableDefPage, Format.OffsetNextTableDefPage);
+        while (nextPage != 0)
+        {
+            definitionPages.Add(nextPage);
+            byte[] page = new byte[Format.PageSize];
+            _database.PageChannel.ReadPage(page, nextPage);
+            nextPage = ByteUtil.GetIntLittleEndian(page, Format.OffsetNextTableDefPage);
+        }
+
+        var pageBuffers = new Dictionary<int, byte[]>();
+
+        void WriteDefinitionInt(int offset, int value)
+        {
+            for (int byteIndex = 0; byteIndex < 4; byteIndex++)
+            {
+                int absoluteOffset = offset + byteIndex;
+                int pageIndex;
+                int pageOffset;
+                if (absoluteOffset < Format.PageSize)
+                {
+                    pageIndex = 0;
+                    pageOffset = absoluteOffset;
+                }
+                else
+                {
+                    int relative = absoluteOffset - Format.PageSize;
+                    int payloadSize = Format.PageSize - 8;
+                    pageIndex = 1 + relative / payloadSize;
+                    pageOffset = 8 + relative % payloadSize;
+                }
+                if (pageIndex >= definitionPages.Count)
+                {
+                    throw new DatabaseException("Foreign-key metadata points outside the table definition.");
+                }
+                int pageNumber = definitionPages[pageIndex];
+                if (!pageBuffers.TryGetValue(pageNumber, out byte[]? pageBuffer))
+                {
+                    pageBuffer = new byte[Format.PageSize];
+                    _database.PageChannel.ReadPage(pageBuffer, pageNumber);
+                    pageBuffers.Add(pageNumber, pageBuffer);
+                }
+                pageBuffer[pageOffset] = (byte)(value >> (8 * byteIndex));
+
+                if (absoluteOffset < _tableDef.Length)
+                {
+                    _tableDef[absoluteOffset] = pageBuffer[pageOffset];
+                }
+            }
+        }
+
+        foreach (IndexImpl index in indexes)
+        {
+            WriteDefinitionInt(index.RelatedTablePageNumberOffset, newParentPage);
+            index.RetargetRelatedTablePage(oldParentPage, newParentPage);
+
+            if (parentIndexMap != null
+                && parentIndexMap.TryGetValue(index.RelatedIndexNumber, out int newIndexNumber)
+                && newIndexNumber != index.RelatedIndexNumber)
+            {
+                WriteDefinitionInt(index.RelatedIndexNumberOffset, newIndexNumber);
+                index.RetargetRelatedIndex(index.RelatedIndexNumber, newIndexNumber);
+            }
+        }
+
+        foreach ((int pageNumber, byte[] pageBuffer) in pageBuffers)
+        {
+            _database.PageChannel.WritePage(pageBuffer, pageNumber);
+        }
+        if (pageBuffers.TryGetValue(TableDefPageNumber, out byte[]? firstPage))
+        {
+            Array.Copy(firstPage, _tableDefPage, Format.PageSize);
+        }
+        return true;
     }
 
     /// <summary>
@@ -779,7 +921,7 @@ public sealed class Table
     /// <summary>
     /// Fills in all auto-number column values for add.
     /// </summary>
-    private void HandleAutoNumbers(object?[] row)
+    private void HandleAutoNumbers(object?[] row, bool preserveAutoNumbers)
     {
         if (!_columns.Any(c => c.AutoNumber))
         {
@@ -793,12 +935,38 @@ public sealed class Table
             }
             if (column.Type == DataType.Long)
             {
-                row[column.ColumnIndex] = ++_lastLongAutoNumber;
+                if (!preserveAutoNumbers || IsNullValue(row[column.ColumnIndex]))
+                {
+                    row[column.ColumnIndex] = ++_lastLongAutoNumber;
+                }
+                else
+                {
+                    int supplied = Convert.ToInt32(row[column.ColumnIndex], System.Globalization.CultureInfo.InvariantCulture);
+                    _lastLongAutoNumber = Math.Max(_lastLongAutoNumber, supplied);
+                    row[column.ColumnIndex] = supplied;
+                }
             }
             else if (column.Type == DataType.Guid)
             {
-                row[column.ColumnIndex] = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+                if (!preserveAutoNumbers || IsNullValue(row[column.ColumnIndex]))
+                {
+                    row[column.ColumnIndex] = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+                }
             }
+        }
+    }
+
+    private void HandleDefaultValues(object?[] row)
+    {
+        foreach (Column column in _columns)
+        {
+            if (!ReferenceEquals(row[column.ColumnIndex], MissingValue))
+            {
+                continue;
+            }
+            row[column.ColumnIndex] = column.DefaultValue == null
+                ? null
+                : DefaultValueEvaluator.Evaluate(column.DefaultValue);
         }
     }
 

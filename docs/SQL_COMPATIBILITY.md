@@ -15,14 +15,21 @@ should be escaped with square brackets.
 INSERT, UPDATE and DELETE are applied to a private staging copy for ordinary
 autocommit connections and the mirror is refreshed only for affected tables after
 successful installation. CREATE/DROP TABLE and INDEX are supported for
-the table shapes listed in the compatibility matrix. ALTER TABLE uses safe table
-recreation and therefore rejects autonumber, calculated, relationship-bearing or
-otherwise unsupported table shapes.
+the table shapes listed in the compatibility matrix. ALTER TABLE uses a hybrid
+metadata-extension/rebuild path: nullable columns on ordinary and relationship
+tables can be added without rewriting rows, while rebuilds preserve AutoNumber
+values and counters. Calculated and complex table shapes remain explicitly limited.
 
 UPDATE and DELETE expressions are evaluated by the translated mirror query. This
 supports correlated subqueries and JOIN forms, while the file layer remains the
 authoritative writer. A JOIN that maps one target row to different SET values is
 rejected deterministically.
+
+`CREATE TABLE` supports named primary/unique constraints, table-level foreign
+keys, and persisted `DEFAULT` expressions for portable literals and
+`Now()`/`Date()`. `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` writes the
+Access relationship catalog and supports `ON UPDATE CASCADE`, `ON DELETE
+CASCADE` and `ON DELETE SET NULL`.
 
 `CREATE TABLE target AS SELECT ... WITH DATA` copies the result-set schema and
 rows into a new Access table. `WITH NO DATA` creates only the inferred schema;
@@ -32,9 +39,11 @@ parameterized CTAS is rejected because DDL commands do not carry parameter value
 
 `TRANSFORM/PIVOT` is translated into conditional aggregation. Explicit
 `PIVOT ... IN (...)` lists and inline dynamic pivots are supported; saved
-dynamic crosstabs that require parameters remain limited. `TOP ... PERCENT`,
-CREATE/DROP VIEW and unsupported complex/encrypted file operations are rejected
-explicitly rather than silently rewritten into a different operation.
+dynamic crosstabs that require parameters remain limited. Managed `CREATE VIEW`
+and `DROP VIEW` persist/rewrite a conservative SELECT QueryDef, and
+parameterized QueryDefs are expanded as derived tables when the command runs.
+Action QueryDefs, unsupported saved-query grammar and `TOP ... PERCENT` are
+rejected explicitly rather than silently rewritten into a different operation.
 
 MONEY and NUMERIC columns are mirrored as text with an Access-compatible exact
 decimal collation. Recognized arithmetic, comparisons and SUM/MIN/MAX use

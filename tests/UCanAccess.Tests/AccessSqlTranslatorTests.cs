@@ -157,9 +157,12 @@ public class AccessSqlTranslatorTests
     }
 
     [Fact]
-    public void Top_percent_not_supported_yet()
+    public void Top_percent_is_rejected_by_the_5_1_6_compatibility_baseline()
     {
-        Assert.Throws<NotSupportedException>(() => AccessSqlTranslator.Translate("SELECT TOP 10 PERCENT a FROM t"));
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            AccessSqlTranslator.Translate("SELECT TOP 10 PERCENT a FROM t ORDER BY a"));
+
+        Assert.Contains("5.1.6", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

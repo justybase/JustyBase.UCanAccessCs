@@ -84,14 +84,15 @@ public sealed class Database : IDisposable
         set => _enforceForeignKeys = value;
     }
 
-    private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly, bool allowExternalLinks)
+    private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly,
+        bool allowExternalLinks, IAccessPageCodec? codec = null)
     {
         _stream = stream;
         _isReadOnly = readOnly;
         _allowExternalLinks = allowExternalLinks;
         _format = JetFormat.GetFormat(ReadHeader(stream));
 
-        _pageChannel = new PageChannel(stream, _format, closeChannel);
+        _pageChannel = new PageChannel(stream, _format, closeChannel, codec);
         _textEncoding = ResolveEncoding(encoding);
 
         _systemCatalog = LoadTable(TableSystemCatalog, PageSystemCatalog, SystemObjectFlag, TypeTable);
@@ -190,15 +191,25 @@ public sealed class Database : IDisposable
     /// <param name="path">path to the .mdb/.accdb file</param>
     /// <param name="encoding">optional text encoding override (only relevant for Jet 3 databases)</param>
     /// <param name="readOnly">whether to open without write intent (default true)</param>
-    public static Database Open(string path, Encoding? encoding = null, bool readOnly = true, bool allowExternalLinks = false)
+    /// <param name="codecFactory">optional page codec factory for an encrypted file</param>
+    public static Database Open(string path, Encoding? encoding = null, bool readOnly = true,
+        bool allowExternalLinks = false, IAccessPageCodecFactory? codecFactory = null)
     {
         if (readOnly)
         {
             var roStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.RandomAccess);
             bool success = false;
+            IAccessPageCodec? codec = null;
             try
             {
-                var db = new Database(roStream, true, encoding, true, allowExternalLinks); db._path = path;
+                JetFormat format = JetFormat.GetFormat(ReadHeader(roStream));
+                if (codecFactory != null)
+                {
+                    byte[] root = ReadRootPage(roStream, format);
+                    codec = codecFactory.Create(new AccessPageCodecContext(
+                        path, format, true, root));
+                }
+                var db = new Database(roStream, true, encoding, true, allowExternalLinks, codec); db._path = path;
                 success = true;
                 return db;
             }
@@ -206,6 +217,7 @@ public sealed class Database : IDisposable
             {
                 if (!success)
                 {
+                    codec?.Dispose();
                     roStream.Dispose();
                 }
             }
@@ -214,6 +226,7 @@ public sealed class Database : IDisposable
         // read-write: first peek the format version to reject read-only formats
         var rwStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1, FileOptions.RandomAccess);
         bool ok = false;
+        IAccessPageCodec? codecForWrite = null;
         try
         {
             JetFormat format = JetFormat.GetFormat(ReadHeader(rwStream));
@@ -221,7 +234,13 @@ public sealed class Database : IDisposable
             {
                 throw new DatabaseException($"The database format {format} does not support writing.");
             }
-            var db = new Database(rwStream, true, encoding, false, allowExternalLinks); db._path = path;
+            if (codecFactory != null)
+            {
+                byte[] root = ReadRootPage(rwStream, format);
+                codecForWrite = codecFactory.Create(new AccessPageCodecContext(
+                    path, format, false, root));
+            }
+            var db = new Database(rwStream, true, encoding, false, allowExternalLinks, codecForWrite); db._path = path;
             db.AcquireLock();
             ok = true;
             return db;
@@ -230,6 +249,7 @@ public sealed class Database : IDisposable
         {
             if (!ok)
             {
+                codecForWrite?.Dispose();
                 rwStream.Dispose();
             }
         }
@@ -269,6 +289,25 @@ public sealed class Database : IDisposable
             throw new DatabaseException("The database was opened read-only.");
         }
         return new WriteBatch(this);
+    }
+
+    private static byte[] ReadRootPage(Stream stream, JetFormat format)
+    {
+        byte[] root = new byte[format.PageSize];
+        stream.Position = 0;
+        int total = 0;
+        while (total < root.Length)
+        {
+            int read = stream.Read(root, total, root.Length - total);
+            if (read == 0)
+            {
+                throw new DatabaseException(
+                    $"Failed attempting to read {format.PageSize} bytes from the root page, only read {total}");
+            }
+            total += read;
+        }
+        stream.Position = 0;
+        return root;
     }
 
     internal PageChannel PageChannel => _pageChannel;
@@ -500,9 +539,28 @@ public sealed class Database : IDisposable
         }
     }
 
-    /// <summary>renames a table in the system catalog and the in-memory table list</summary>
-    internal void RenameTable(string fromName, string toName)
+    /// <summary>
+    /// Renames a user table in the system catalog and updates relationship metadata
+    /// that refers to that table.
+    /// </summary>
+    public void RenameTable(string fromName, string toName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fromName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toName);
+        if (fromName.Equals(toName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        if (GetTable(fromName) == null)
+        {
+            throw new InvalidOperationException($"Table '{fromName}' does not exist.");
+        }
+        if (GetTable(toName) != null || GetSystemTable(toName) != null)
+        {
+            throw new InvalidOperationException($"A table named '{toName}' already exists.");
+        }
+
+        bool renamed = false;
         foreach (Table.RowLocation location in _systemCatalog.RowLocations())
         {
             if (TryGetString(location.Row, "Name", out string? catalogName) && catalogName != null
@@ -518,9 +576,17 @@ public sealed class Database : IDisposable
                     }
                 }
                 _systemCatalog.UpdateRow(location.PageNumber, location.RowNumber, values);
+                renamed = true;
                 break;
             }
         }
+
+        if (!renamed)
+        {
+            throw new InvalidOperationException($"Table '{fromName}' was not found in the system catalog.");
+        }
+
+        RenameRelationshipReferences(fromName, toName);
 
         for (int i = 0; i < _tableInfos.Count; i++)
         {
@@ -542,6 +608,46 @@ public sealed class Database : IDisposable
         {
             return;
         }
+        IReadOnlyList<Relationship> allRelationships = GetRelationships();
+        Relationship[] removedRelationships = allRelationships
+            .Where(rel => rel.FromTable.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase)
+                || rel.ToTable.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Relationship[] remainingRelationships = allRelationships
+            .Except(removedRelationships)
+            .ToArray();
+
+        // Dropping a parent table must also remove provider-created child FK
+        // indexes.  Otherwise their RelatedTablePageNumber points at the parent
+        // definition page which is about to be deallocated.  Deduplicate the
+        // candidates because several removed relationships can share one index.
+        var indexCandidates = new HashSet<(string Table, string Index)>(
+            EqualityComparer<(string Table, string Index)>.Default);
+        foreach (Relationship relationship in removedRelationships)
+        {
+            if (relationship.ToTable.Name.Equals(tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue; // the child table itself is being deleted
+            }
+            foreach (IndexImpl index in relationship.ToTable.Indexes)
+            {
+                if (!ForeignIndexMatchesRelationship(index, relationship)
+                    || remainingRelationships.Any(other =>
+                        ForeignIndexMatchesRelationship(index, other)))
+                {
+                    continue;
+                }
+                if (index.Name != null)
+                {
+                    indexCandidates.Add((relationship.ToTable.Name, index.Name));
+                }
+            }
+        }
+        foreach ((string childTable, string indexName) in indexCandidates)
+        {
+            DropIndex(childTable, indexName);
+        }
+
         var toDelete = new List<Table.RowLocation>();
         foreach (Table.RowLocation location in relTable.RowLocations())
         {
@@ -557,6 +663,37 @@ public sealed class Database : IDisposable
         foreach (Table.RowLocation location in toDelete)
         {
             relTable.DeleteRow(location.PageNumber, location.RowNumber);
+        }
+    }
+
+    private void RenameRelationshipReferences(string fromName, string toName)
+    {
+        Table? relTable = GetSystemTable("MSysRelationships");
+        if (relTable == null)
+        {
+            return;
+        }
+
+        foreach (Table.RowLocation location in relTable.RowLocations())
+        {
+            object?[] values = location.Row.ToArray();
+            bool changed = false;
+            for (int i = 0; i < relTable.Columns.Count; i++)
+            {
+                string column = relTable.Columns[i].Name;
+                if ((column.Equals("szObject", StringComparison.OrdinalIgnoreCase)
+                        || column.Equals("szReferencedObject", StringComparison.OrdinalIgnoreCase))
+                    && values[i] is string name
+                    && name.Equals(fromName, StringComparison.OrdinalIgnoreCase))
+                {
+                    values[i] = toName;
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                relTable.UpdateRow(location.PageNumber, location.RowNumber, values);
+            }
         }
     }
 
@@ -603,7 +740,8 @@ public sealed class Database : IDisposable
                 index.IndexData.IsUnique,
                 index.IsPrimaryKey,
                 index.IndexData.IsRequired,
-                index.IndexData.ShouldIgnoreNulls));
+                index.IndexData.ShouldIgnoreNulls,
+                index.IsForeignKey));
         }
         return result;
     }
@@ -632,7 +770,7 @@ public sealed class Database : IDisposable
     public void DropView(string viewName)
         => TableMutator.DropView(this, viewName);
 
-    private void RemoveFromSystemCatalog(string name)
+    internal void RemoveFromSystemCatalog(string name)
     {
         foreach (Table.RowLocation location in _systemCatalog.RowLocations())
         {
@@ -693,6 +831,25 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
+    /// Allocates an Access query object id.  QueryDefs use the reserved
+    /// negative object-id range, while table definitions use page numbers.
+    /// </summary>
+    internal int AllocateQueryObjectId()
+    {
+        var used = _systemCatalog.Rows()
+            .Select(row => TryGetInt(row, "Id", out int id) ? id : 0)
+            .ToHashSet();
+        for (int candidate = int.MinValue + 1; candidate < 0; candidate++)
+        {
+            if (!used.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+        throw new DatabaseException("The database has no free QueryDef object id.");
+    }
+
+    /// <summary>
     /// Reads the minimal column-property map stored on the table's MSysObjects row.
     /// The system catalog itself is constructed before its backing field is assigned,
     /// so the early-load case intentionally reports no custom properties.
@@ -717,6 +874,29 @@ public sealed class Database : IDisposable
             return false;
         }
         return false;
+    }
+
+    /// <summary>Reads the Access DefaultValue expression for a table column.</summary>
+    internal string? GetColumnDefault(int tableDefPageNumber, string columnName)
+    {
+        if (_systemCatalog == null)
+        {
+            return null;
+        }
+
+        foreach (Table.RowLocation location in _systemCatalog.RowLocations())
+        {
+            if (!TryGetInt(location.Row, "Id", out int objectId) || objectId != tableDefPageNumber)
+            {
+                continue;
+            }
+            if (location.Row.TryGetValue("LvProp", out object? value) && value is byte[] bytes)
+            {
+                return PropertyMapCodec.GetDefault(bytes, columnName, TextEncoding);
+            }
+            return null;
+        }
+        return null;
     }
 
     /// <summary>
@@ -824,6 +1004,23 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
+    /// Updates child foreign-key index metadata after a table definition is
+    /// replaced.  Jet stores the referenced table-definition page in each child
+    /// index, in addition to the relationship catalog's table names.
+    /// </summary>
+    internal void RetargetForeignKeyIndexes(int oldParentPage, int newParentPage,
+        IReadOnlyDictionary<int, int>? parentIndexMap = null)
+    {
+        foreach (TableMetaData metadata in _tableInfos
+            .Where(info => !info.IsSystem && !info.IsLinked)
+            .ToArray())
+        {
+            GetTable(metadata.Name)?.RetargetForeignKeyIndexes(oldParentPage, newParentPage,
+                parentIndexMap);
+        }
+    }
+
+    /// <summary>
     /// Finds all the relationships in the database between the given tables.
     /// </summary>
     public IReadOnlyList<Relationship> GetRelationships(string table1, string table2)
@@ -858,6 +1055,229 @@ public sealed class Database : IDisposable
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Adds a foreign-key relationship to MSysRelationships and validates the
+    /// existing child rows before the catalog mutation is committed.  Access
+    /// permits references to either a primary key or a matching unique key.
+    /// </summary>
+    public void AddRelationship(RelationshipBuilder builder)
+    {
+        if (IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
+        Table parent = GetTable(builder.FromTable)
+            ?? throw new InvalidOperationException($"Table '{builder.FromTable}' does not exist.");
+        Table child = GetTable(builder.ToTable)
+            ?? throw new InvalidOperationException($"Table '{builder.ToTable}' does not exist.");
+        if (builder.Columns.Count == 0)
+        {
+            throw new InvalidOperationException("A relationship must contain at least one column pair.");
+        }
+        if (GetRelationships().Any(rel => rel.Name.Equals(builder.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException($"Relationship '{builder.Name}' already exists.");
+        }
+
+        var parentColumns = new List<Column>();
+        var childColumns = new List<Column>();
+        foreach ((string fromName, string toName) in builder.Columns)
+        {
+            Column from = parent.Columns.FirstOrDefault(c => c.Name.Equals(fromName, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Column '{fromName}' does not exist on table '{parent.Name}'.");
+            Column to = child.Columns.FirstOrDefault(c => c.Name.Equals(toName, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Column '{toName}' does not exist on table '{child.Name}'.");
+            if (from.Type != to.Type)
+            {
+                throw new InvalidOperationException(
+                    $"Relationship '{builder.Name}' requires matching column types ('{fromName}' and '{toName}').");
+            }
+            parentColumns.Add(from);
+            childColumns.Add(to);
+        }
+
+        IndexImpl? parentKey = parent.Indexes.FirstOrDefault(index => (index.IsPrimaryKey
+                || index.IndexData.IsUnique)
+                && SameIndexColumns(index.IndexData.Columns.Select(c => c.Column.Name), parentColumns));
+        if (parentKey == null)
+        {
+            throw new InvalidOperationException(
+                $"Relationship '{builder.Name}' requires a primary or unique key on '{parent.Name}'.");
+        }
+
+        if (builder.ReferentialIntegrity)
+        {
+            foreach (Table.RowLocation location in child.RowLocations())
+            {
+                object?[] values = location.Row.ToArray();
+                if (childColumns.Any(column => values[column.ColumnIndex] is null or DBNull))
+                {
+                    continue;
+                }
+                object?[] key = childColumns.Select(column => values[column.ColumnIndex]).ToArray();
+                if (!parent.RowLocations().Any(row => SameKey(row.Row, parentColumns, key)))
+                {
+                    throw new DatabaseException(
+                        $"Existing rows in '{child.Name}' violate relationship '{builder.Name}'.");
+                }
+            }
+        }
+
+        // Access keeps a supporting index on the foreign side.  Preserve an
+        // existing matching index unless a one-to-one relationship requires a
+        // unique one; in that case build a unique replacement index so both the
+        // Jet metadata and the physical B-tree enforce the cardinality.
+        IndexImpl? childKey = child.Indexes.FirstOrDefault(index => SameIndexColumns(
+            index.IndexData.Columns.Select(c => c.Column.Name), childColumns));
+        bool foreignIndexMatchesRelationship = childKey?.IsForeignKey != true
+            || (childKey.RelatedTablePageNumber == parent.TableDefPageNumber
+                && childKey.RelatedIndexNumber == parentKey.IndexNumber
+                && childKey.CascadeUpdates == builder.CascadeUpdates
+                && childKey.CascadeDeletes == builder.CascadeDeletes);
+        bool needsSupportingIndex = childKey == null
+            || !foreignIndexMatchesRelationship
+            || (builder.OneToOne && !childKey.IndexData.IsUnique);
+        if (needsSupportingIndex)
+        {
+            string indexName = builder.Name;
+            if (child.Indexes.Any(index => index.Name != null
+                    && index.Name.Equals(indexName, StringComparison.OrdinalIgnoreCase))
+                || indexName.Length > Format.MaxIndexNameLength)
+            {
+                indexName = "fk_" + Guid.NewGuid().ToString("N")[..8];
+            }
+            var supportingIndex = new IndexBuilder(indexName);
+            supportingIndex.WithColumns(childColumns.Select(column => column.Name).ToArray());
+            if (builder.OneToOne)
+            {
+                supportingIndex.WithUnique();
+            }
+            supportingIndex.WithForeignKey(parentKey.IndexNumber, parent.TableDefPageNumber,
+                builder.CascadeUpdates, builder.CascadeDeletes);
+            AddIndex(child.Name, supportingIndex);
+            child = GetTable(builder.ToTable)!;
+        }
+
+        Table? relationshipTable = GetSystemTable("MSysRelationships")
+            ?? throw new DatabaseException("The database does not contain MSysRelationships.");
+        int flags = 0;
+        if (builder.OneToOne) flags |= Relationship.OneToOneFlag;
+        if (!builder.ReferentialIntegrity) flags |= Relationship.NoReferentialIntegrityFlag;
+        if (builder.CascadeUpdates) flags |= Relationship.CascadeUpdatesFlag;
+        if (builder.CascadeDeletes) flags |= Relationship.CascadeDeletesFlag;
+        if (builder.CascadeNullOnDelete) flags |= Relationship.CascadeNullFlag;
+
+        foreach (int index in Enumerable.Range(0, builder.Columns.Count))
+        {
+            var values = new object?[relationshipTable.Columns.Count];
+            for (int i = 0; i < relationshipTable.Columns.Count; i++)
+            {
+                values[i] = relationshipTable.Columns[i].Name switch
+                {
+                    "szRelationship" => builder.Name,
+                    "grbit" => flags,
+                    "ccolumn" => builder.Columns.Count,
+                    "icolumn" => index,
+                    "szObject" => child.Name,
+                    "szColumn" => childColumns[index].Name,
+                    "szReferencedObject" => parent.Name,
+                    "szReferencedColumn" => parentColumns[index].Name,
+                    _ => null,
+                };
+            }
+            relationshipTable.AddRow(values);
+        }
+    }
+
+    /// <summary>Removes all catalog rows for a named relationship.</summary>
+    public void DropRelationship(string name)
+    {
+        if (IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
+        Table relationshipTable = GetSystemTable("MSysRelationships")
+            ?? throw new DatabaseException("The database does not contain MSysRelationships.");
+        var rows = relationshipTable.RowLocations()
+            .Where(location => TryGetString(location.Row, "szRelationship", out string? current)
+                && current != null && current.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            throw new InvalidOperationException($"Relationship '{name}' does not exist.");
+        }
+
+        // The provider-created supporting index belongs to the constraint.  Remove
+        // it together with the catalog rows so a later DROP COLUMN can proceed
+        // without leaving an index that still refers to the dropped field.  A
+        // matching FK index may be shared by another relationship, in which case
+        // it must remain until the last relationship using those columns is gone.
+        IReadOnlyList<Relationship> allRelationships = GetRelationships();
+        Relationship[] remainingRelationships = allRelationships
+            .Where(rel => !rel.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (Relationship relationship in allRelationships
+            .Where(rel => rel.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            string[] supportingIndexes = relationship.ToTable.Indexes
+                .Where(index => ForeignIndexMatchesRelationship(index, relationship)
+                    && !remainingRelationships.Any(other =>
+                        ForeignIndexMatchesRelationship(index, other)))
+                .Select(index => index.Name)
+                .Where(indexName => indexName != null)
+                .Cast<string>()
+                .ToArray();
+            foreach (string indexName in supportingIndexes)
+            {
+                DropIndex(relationship.ToTable.Name, indexName);
+            }
+        }
+
+        foreach (Table.RowLocation location in rows)
+        {
+            relationshipTable.DeleteRow(location.PageNumber, location.RowNumber);
+        }
+    }
+
+    private static bool SameIndexColumns(IEnumerable<string> actual, IReadOnlyList<Column> expected)
+        => actual.Select(name => name.ToUpperInvariant()).SequenceEqual(
+            expected.Select(column => column.Name.ToUpperInvariant()));
+
+    private static bool ForeignIndexMatchesRelationship(IndexImpl index, Relationship relationship)
+    {
+        if (!index.IsForeignKey
+            || !SameIndexColumns(index.IndexData.Columns.Select(c => c.Column.Name),
+                relationship.ToColumns))
+        {
+            return false;
+        }
+
+        IndexImpl? parentKey = relationship.FromTable.Indexes.FirstOrDefault(candidate =>
+            (candidate.IsPrimaryKey || candidate.IndexData.IsUnique)
+            && SameIndexColumns(candidate.IndexData.Columns.Select(c => c.Column.Name),
+                relationship.FromColumns));
+        return parentKey != null
+            && index.RelatedTablePageNumber == relationship.FromTable.TableDefPageNumber
+            && index.RelatedIndexNumber == parentKey.IndexNumber
+            && index.CascadeUpdates == relationship.CascadeUpdates
+            && index.CascadeDeletes == relationship.CascadeDeletes;
+    }
+
+    private static bool SameKey(Row row, IReadOnlyList<Column> columns, object?[] key)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            object? value = row[columns[i].Name];
+            if (!string.Equals(Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+                    Convert.ToString(key[i], System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>

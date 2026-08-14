@@ -20,6 +20,10 @@ public sealed class UCanAccessConnection : DbConnection
     private long _sourceLength = -1;
     private long _sourceWriteTicks;
 
+    // Internal seam used by fault-injection tests.  Production connections use
+    // the physical filesystem implementation and no public API depends on it.
+    internal IAtomicFileSystem AtomicFileSystem { get; set; } = PhysicalAtomicFileSystem.Instance;
+
     /// <summary>
     /// Optional per-connection opener for password-protected/encrypted files.
     /// The default provider path opens unencrypted Access files directly.
@@ -227,6 +231,10 @@ public sealed class UCanAccessConnection : DbConnection
         {
             return;
         }
+        if (_connStr?.PreventReloading == true)
+        {
+            return;
+        }
         // Linked databases own their own file handles and can legitimately
         // update a different file. Reopening the main handle opportunistically
         // here would leave a second link resolver alive on Windows; linked-file
@@ -255,6 +263,9 @@ public sealed class UCanAccessConnection : DbConnection
 
         _mirror?.Dispose();
         _mirror = null;
+        // A reload starts a new file snapshot.  @@IDENTITY is scoped to the
+        // current provider session and must not refer to the previous handle.
+        ClearLastInsertedId();
         _database.Dispose();
         _database = OpenDatabaseFile(path, _connStr?.ReadOnly ?? true);
         CaptureSourceFingerprint(_database);
@@ -287,6 +298,10 @@ public sealed class UCanAccessConnection : DbConnection
             _openCount++;
             return;
         }
+        // Opening a new provider session must not inherit @@IDENTITY from the
+        // previous file handle.  Atomic replacement also reaches this path
+        // without going through Close().
+        ClearLastInsertedId();
         string columnOrder = _connStr.ColumnOrder.Trim();
         if (!columnOrder.Equals("natural", StringComparison.OrdinalIgnoreCase)
             && !columnOrder.Equals("display", StringComparison.OrdinalIgnoreCase))
@@ -325,6 +340,7 @@ public sealed class UCanAccessConnection : DbConnection
         }
         catch
         {
+            ClearLastInsertedId();
             _mirror?.Dispose();
             _mirror = null;
             _database?.Dispose();
@@ -350,6 +366,7 @@ public sealed class UCanAccessConnection : DbConnection
             _sourceWriteTicks = 0;
             _state = ConnectionState.Closed;
             _openCount = 0;
+            ClearLastInsertedId();
         }
     }
 
@@ -382,7 +399,7 @@ public sealed class UCanAccessConnection : DbConnection
         {
             throw new InvalidOperationException("A transaction is already active on this connection.");
         }
-        var transaction = new UCanAccessTransaction(this, isolationLevel);
+        var transaction = new UCanAccessTransaction(this, isolationLevel, AtomicFileSystem);
         ActiveTransaction = transaction;
         return transaction;
     }
@@ -410,10 +427,11 @@ public sealed class UCanAccessConnection : DbConnection
         string backupPath = sourcePath + ".ucanaccess-backup-" + Guid.NewGuid().ToString("N");
         try
         {
-            System.IO.File.Replace(preparedPath, sourcePath, backupPath, ignoreMetadataErrors: true);
+            AtomicFileSystem.Replace(preparedPath, sourcePath, backupPath,
+                ignoreMetadataErrors: true);
             try
             {
-                System.IO.File.Delete(backupPath);
+                AtomicFileSystem.Delete(backupPath);
             }
             catch
             {
@@ -518,7 +536,7 @@ public sealed class UCanAccessConnection : DbConnection
         object?[]? insertedValues = null;
         try
         {
-            System.IO.File.Copy(sourcePath, stagedPath, true);
+            AtomicFileSystem.Copy(sourcePath, stagedPath, true);
             stagedDatabase = OpenDatabaseFile(stagedPath, readOnly: false);
             stagedMirror = CreateMirrorFor(stagedDatabase, useConfiguredStorage: false);
             int affected = 0;
@@ -549,7 +567,7 @@ public sealed class UCanAccessConnection : DbConnection
             {
                 try
                 {
-                    System.IO.File.Delete(stagedPath);
+                    AtomicFileSystem.Delete(stagedPath);
                 }
                 catch
                 {
@@ -600,22 +618,27 @@ public sealed class UCanAccessConnection : DbConnection
     }
 
     /// <summary>
-    /// Executes CREATE/DROP INDEX on a same-directory staging copy and installs the
-    /// result only after the file has been closed cleanly.  This keeps a failed index
-    /// validation or B-tree build from changing the caller's original file.
+    /// Executes an autocommit schema mutation on a same-directory staging copy
+    /// and installs the result only after the file has been closed cleanly.  This
+    /// keeps failed catalog, table-definition, relationship and index changes
+    /// from changing the caller's original file.
     /// </summary>
-    internal int ExecuteIndexDdlAtomically(string sql)
+    internal int ExecuteDdlAtomically(string sql)
     {
+        if (AccessDatabase.IsReadOnly)
+        {
+            throw new DatabaseException("The database was opened read-only.");
+        }
         ThrowIfActiveReaders();
         string sourcePath = AccessDatabase.Path;
         if (string.IsNullOrEmpty(sourcePath) || !System.IO.File.Exists(sourcePath))
         {
-            throw new InvalidOperationException("Index DDL requires a file-backed database.");
+            throw new InvalidOperationException("Schema DDL requires a file-backed database.");
         }
         if (AccessDatabase.GetTableMetaData().Any(meta => meta.IsLinked))
         {
             throw new NotSupportedException(
-                "Index DDL involving native linked tables is not supported atomically.");
+                "Schema DDL involving native linked tables is not supported atomically.");
         }
 
         string directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(sourcePath))
@@ -623,16 +646,16 @@ public sealed class UCanAccessConnection : DbConnection
         string extension = System.IO.Path.GetExtension(sourcePath);
         string stagedPath = System.IO.Path.Combine(directory,
             "." + System.IO.Path.GetFileNameWithoutExtension(sourcePath)
-            + ".ucanaccess-index-" + Guid.NewGuid().ToString("N") + extension);
+            + ".ucanaccess-ddl-" + Guid.NewGuid().ToString("N") + extension);
 
         FileInfo sourceInfo = new(sourcePath);
         long originalLength = sourceInfo.Length;
         long originalWriteTicks = sourceInfo.LastWriteTimeUtc.Ticks;
-        System.IO.File.Copy(sourcePath, stagedPath, true);
         File.Database? stagedDatabase = null;
         Mirror? stagedMirror = null;
         try
         {
+            AtomicFileSystem.Copy(sourcePath, stagedPath, true);
             stagedDatabase = OpenDatabaseFile(stagedPath, readOnly: false);
             stagedMirror = CreateMirrorFor(stagedDatabase, useConfiguredStorage: false);
             int result = AccessDdl.Execute(stagedDatabase, stagedMirror, sql);
@@ -654,7 +677,7 @@ public sealed class UCanAccessConnection : DbConnection
             {
                 try
                 {
-                    System.IO.File.Delete(stagedPath);
+                    AtomicFileSystem.Delete(stagedPath);
                 }
                 catch
                 {
@@ -663,6 +686,21 @@ public sealed class UCanAccessConnection : DbConnection
             }
         }
     }
+
+    public override Task OpenAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Open();
+        }, cancellationToken);
+    }
+
+    // Kept as an internal compatibility shim for tests and callers which used
+    // the earlier index-specific staging entry point.
+    internal int ExecuteIndexDdlAtomically(string sql)
+        => ExecuteDdlAtomically(sql);
 
     protected override void Dispose(bool disposing)
     {
@@ -763,11 +801,19 @@ public sealed class UCanAccessConnection : DbConnection
                 continue;
             }
             string type = meta.IsLinked ? "LINKED TABLE" : meta.IsSystem ? "SYSTEM TABLE" : "TABLE";
+            if (Mismatches(restrictions, 3, type))
+            {
+                continue;
+            }
             AddRow(table, Database, null, meta.Name, type, null, null, null, null, null);
         }
         foreach (QueryDef query in _database.GetQueries())
         {
             if (Mismatches(restrictions, 2, query.Name))
+            {
+                continue;
+            }
+            if (Mismatches(restrictions, 3, "VIEW"))
             {
                 continue;
             }
@@ -839,7 +885,7 @@ public sealed class UCanAccessConnection : DbConnection
                 int? characterLength = column.Type is DataType.Text or DataType.Memo
                     ? column.ColumnLength / _database.Format.SizeTextFieldUnit
                     : column.VariableLength ? column.ColumnLength : null;
-                AddRow(table, Database, null, meta.Name, column.Name, ordinal, null,
+                AddRow(table, Database, null, meta.Name, column.Name, ordinal, column.DefaultValue,
                     required ? "NO" : "YES", clrType,
                     characterLength,
                     column.Type is DataType.Numeric ? column.Precision : null,

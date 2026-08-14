@@ -29,6 +29,41 @@ public class AdoNetTests
     }
 
     [Fact]
+    public async Task Async_open_command_and_reader_follow_ado_net_contract()
+    {
+        await using var conn = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("pivot.mdb")};Read Only=true",
+        };
+        CancellationToken testCancellation = TestContext.Current.CancellationToken;
+        await conn.OpenAsync(testCancellation);
+
+        await using var command = conn.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM t_pivot";
+        Assert.Equal(4L, await command.ExecuteScalarAsync(testCancellation));
+
+        command.CommandText = "SELECT c_cod FROM t_pivot ORDER BY c_cod";
+        await using DbDataReader reader = await command.ExecuteReaderAsync(testCancellation);
+        Assert.True(await reader.ReadAsync(testCancellation));
+        Assert.Equal("paperino", reader.GetString(0));
+    }
+
+    [Fact]
+    public async Task Async_command_honors_pre_canceled_token()
+    {
+        using var conn = Open("pivot.mdb");
+        using var command = conn.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM t_pivot";
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+#pragma warning disable xUnit1051 // this test intentionally supplies an already-canceled token
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => command.ExecuteScalarAsync(cancellation.Token));
+#pragma warning restore xUnit1051
+    }
+
+    [Fact]
     public void Select_star_reads_all_rows()
     {
         using var conn = Open("pivot.mdb");
@@ -157,6 +192,109 @@ public class AdoNetTests
             codes.Add(reader.GetString(0));
         }
         Assert.Equal(new[] { "paperino", "piero" }, codes);
+    }
+
+    [Fact]
+    public void Select_identity_returns_the_last_generated_autonumber()
+    {
+        string source = Fixture("generated/genEmpty.mdb");
+        string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_identity_{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(source, tmp, true);
+        try
+        {
+            using var conn = new UCanAccessConnection($"Data Source={tmp};Read Only=false");
+            conn.Open();
+            using (var create = conn.CreateCommand())
+            {
+                create.CommandText = "CREATE TABLE t_identity (id COUNTER PRIMARY KEY, value TEXT(20))";
+                create.ExecuteNonQuery();
+            }
+            using (var insert = conn.CreateCommand())
+            {
+                insert.CommandText = "INSERT INTO t_identity (value) VALUES ('created')";
+                insert.ExecuteNonQuery();
+            }
+            using var identity = conn.CreateCommand();
+            identity.CommandText = "SELECT @@IDENTITY";
+            Assert.Equal(1L, identity.ExecuteScalar());
+
+            identity.CommandText = "SELECT\t@@IDENTITY AS id;";
+            Assert.Equal(1L, identity.ExecuteScalar());
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_identity_resets_after_close_and_reopen()
+    {
+        string source = Fixture("generated/genEmpty.mdb");
+        string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_identity_reopen_{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(source, tmp, true);
+        try
+        {
+            using var conn = new UCanAccessConnection($"Data Source={tmp};Read Only=false");
+            conn.Open();
+            using (var create = conn.CreateCommand())
+            {
+                create.CommandText = "CREATE TABLE t_identity (id COUNTER PRIMARY KEY, value TEXT(20))";
+                create.ExecuteNonQuery();
+            }
+            using (var insert = conn.CreateCommand())
+            {
+                insert.CommandText = "INSERT INTO t_identity (value) VALUES ('created')";
+                insert.ExecuteNonQuery();
+            }
+            Assert.Equal(1L, conn.LastInsertedId);
+
+            conn.Close();
+            conn.Open();
+
+            using var identity = conn.CreateCommand();
+            identity.CommandText = "SELECT @@IDENTITY";
+            Assert.Null(identity.ExecuteScalar());
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Select_identity_resets_when_the_source_file_is_reloaded()
+    {
+        string source = Fixture("generated/genEmpty.mdb");
+        string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_identity_reload_{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(source, tmp, true);
+        try
+        {
+            using var conn = new UCanAccessConnection($"Data Source={tmp};Read Only=false");
+            conn.Open();
+            using (var create = conn.CreateCommand())
+            {
+                create.CommandText = "CREATE TABLE t_identity (id COUNTER PRIMARY KEY, value TEXT(20))";
+                create.ExecuteNonQuery();
+            }
+            using (var insert = conn.CreateCommand())
+            {
+                insert.CommandText = "INSERT INTO t_identity (value) VALUES ('created')";
+                insert.ExecuteNonQuery();
+            }
+            Assert.Equal(1L, conn.LastInsertedId);
+
+            DateTime changed = System.IO.File.GetLastWriteTimeUtc(tmp).AddMinutes(1);
+            System.IO.File.SetLastWriteTimeUtc(tmp, changed);
+
+            using var identity = conn.CreateCommand();
+            identity.CommandText = "SELECT @@IDENTITY";
+            Assert.Null(identity.ExecuteScalar());
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
     }
 
     [Fact]
@@ -375,5 +513,76 @@ public class AdoNetTests
             Assert.Equal(new[] { "paperino", "piero", "pippo", "pluto" }, values);
         }
         Assert.Null(((UCanAccessConnection)conn).MirrorIfCreated);
+    }
+
+    [Fact]
+    public void Java_memory_and_path_keepmirror_options_map_to_the_local_mirror_modes()
+    {
+        string mirror = Path.Combine(Path.GetTempPath(), $"ucanaccess_keep_{Guid.NewGuid():N}.sqlite");
+        try
+        {
+            var memory = new UCanAccessConnectionString("Data Source=x.mdb;memory=false");
+            Assert.Equal("file", memory.MirrorMode);
+
+            var persistent = new UCanAccessConnectionString($"Data Source=x.mdb;keepMirror={mirror}");
+            Assert.True(persistent.KeepMirror);
+            Assert.Equal("file", persistent.MirrorMode);
+            Assert.Equal(mirror, persistent.MirrorPath);
+
+            using (var conn = new UCanAccessConnection(
+                       $"Data Source={Fixture("pivot.mdb")};Read Only=true;memory=false;keepMirror={mirror}"))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT count(*) FROM t_pivot";
+                Assert.Equal(4L, cmd.ExecuteScalar());
+            }
+            Assert.True(System.IO.File.Exists(mirror));
+        }
+        finally
+        {
+            System.IO.File.Delete(mirror);
+        }
+    }
+
+    [Fact]
+    public void Immediately_release_resources_is_an_alias_for_a_transient_mirror()
+    {
+        var options = new UCanAccessConnectionString(
+            "Data Source=x.mdb;Keep Mirror=true;ImmediatelyReleaseResources=true;preventReloading=true;sysSchema=true");
+
+        Assert.True(options.ImmediatelyReleaseResources);
+        Assert.False(options.KeepMirror);
+        Assert.True(options.PreventReloading);
+        Assert.True(options.ShowSchema);
+
+        var builder = new UCanAccessConnectionStringBuilder
+        {
+            DataSource = "x.mdb",
+            PersistentMirrorPath = "persistent.sqlite",
+            SingleConnection = true,
+            SysSchema = true,
+        };
+        Assert.True(builder.SingleConnection);
+        Assert.True(builder.ImmediatelyReleaseResources);
+        Assert.True(builder.SysSchema);
+        Assert.True(builder.ShowSchema);
+
+        var aliases = new UCanAccessConnectionStringBuilder
+        {
+            ConnectionString = "Data Source=x.mdb;Memory=false;SingleConnection=true;SysSchema=true",
+        };
+        Assert.False(aliases.Memory);
+        Assert.Equal("file", aliases.MirrorMode);
+        Assert.True(aliases.ImmediatelyReleaseResources);
+        Assert.True(aliases.SingleConnection);
+        Assert.True(aliases.SysSchema);
+        Assert.True(aliases.ShowSchema);
+
+        var roundTrip = new UCanAccessConnectionString(builder.ConnectionString);
+        Assert.False(roundTrip.KeepMirror);
+        Assert.Equal("persistent.sqlite", roundTrip.PersistentMirrorPath);
+        Assert.True(roundTrip.ImmediatelyReleaseResources);
+        Assert.True(roundTrip.ShowSchema);
     }
 }

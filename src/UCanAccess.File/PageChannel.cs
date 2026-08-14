@@ -7,6 +7,7 @@ public sealed class PageChannel : IDisposable
 {
     private readonly Stream _channel;
     private readonly JetFormat _format;
+    private readonly IAccessPageCodec? _codec;
     private readonly bool _closeChannel;
     private readonly object _sync = new();
     private bool _disposed;
@@ -15,11 +16,12 @@ public sealed class PageChannel : IDisposable
     private int _batchDepth;
     private readonly Dictionary<int, byte[]> _dirtyPages = new();
 
-    internal PageChannel(Stream channel, JetFormat format, bool closeChannel)
+    internal PageChannel(Stream channel, JetFormat format, bool closeChannel, IAccessPageCodec? codec = null)
     {
         _channel = channel;
         _format = format;
         _closeChannel = closeChannel;
+        _codec = codec;
     }
 
     public JetFormat Format => _format;
@@ -66,6 +68,7 @@ public sealed class PageChannel : IDisposable
                 throw new DatabaseException(
                     $"Failed attempting to read {_format.PageSize} bytes from page {pageNumber}, only read {bytesRead}");
             }
+            _codec?.DecodePage(pageNumber, buffer, buffer);
         }
     }
 
@@ -85,7 +88,7 @@ public sealed class PageChannel : IDisposable
             }
             ValidatePageNumber(pageNumber);
 
-            if (pageNumber == 0)
+            if (pageNumber == 0 && _codec == null)
             {
                 // re-mask header
                 ApplyHeaderMask(page);
@@ -98,13 +101,12 @@ public sealed class PageChannel : IDisposable
                 }
                 else
                 {
-                    WriteAt(page, pageOffset, _format.PageSize - pageOffset,
-                        GetPageOffset(pageNumber) + pageOffset);
+                    WriteEncodedPage(page, pageNumber, pageOffset);
                 }
             }
             finally
             {
-                if (pageNumber == 0)
+                if (pageNumber == 0 && _codec == null)
                 {
                     // de-mask header again so in-memory buffer stays usable
                     ApplyHeaderMask(page);
@@ -139,6 +141,10 @@ public sealed class PageChannel : IDisposable
 
             int pageNumber = (int)(size / _format.PageSize);
             GetGlobalUsageMap().RemovePageNumber(pageNumber);
+            if (_codec != null)
+            {
+                WritePage(new byte[_format.PageSize], pageNumber);
+            }
             return pageNumber;
         }
     }
@@ -160,8 +166,19 @@ public sealed class PageChannel : IDisposable
 
             // wipe the page header
             _dirtyPages.Remove(pageNumber);
-            var invalid = new byte[] { PageTypes.Invalid, 0, 0, 0 };
-            WriteAt(invalid, 0, invalid.Length, GetPageOffset(pageNumber));
+            if (_codec == null)
+            {
+                var invalid = new byte[] { PageTypes.Invalid, 0, 0, 0 };
+                WriteAt(invalid, 0, invalid.Length, GetPageOffset(pageNumber));
+            }
+            else
+            {
+                var page = new byte[_format.PageSize];
+                ReadPage(page, pageNumber);
+                page[0] = PageTypes.Invalid;
+                page[1] = page[2] = page[3] = 0;
+                WritePage(page, pageNumber);
+            }
 
             GetGlobalUsageMap().AddPageNumber(pageNumber);
         }
@@ -268,7 +285,7 @@ public sealed class PageChannel : IDisposable
     private void CacheDirtyPage(byte[] page, int pageNumber, int pageOffset)
     {
         byte[] source = page;
-        if (pageNumber == 0)
+        if (pageNumber == 0 && _codec == null)
         {
             source = page.AsSpan(0, _format.PageSize).ToArray();
             ApplyHeaderMask(source);
@@ -298,12 +315,12 @@ public sealed class PageChannel : IDisposable
     {
         foreach ((int pageNumber, byte[] page) in _dirtyPages.OrderBy(entry => entry.Key))
         {
-            if (pageNumber == 0)
+            if (pageNumber == 0 && _codec == null)
             {
                 ApplyHeaderMask(page);
                 try
                 {
-                    WriteAt(page, 0, _format.PageSize, GetPageOffset(pageNumber));
+                    WriteEncodedPage(page, pageNumber, 0);
                 }
                 finally
                 {
@@ -312,7 +329,7 @@ public sealed class PageChannel : IDisposable
             }
             else
             {
-                WriteAt(page, 0, _format.PageSize, GetPageOffset(pageNumber));
+                WriteEncodedPage(page, pageNumber, 0);
             }
         }
         _dirtyPages.Clear();
@@ -338,6 +355,7 @@ public sealed class PageChannel : IDisposable
                 throw new DatabaseException(
                     $"Failed attempting to read {_format.PageSize} bytes from page 0, only read {bytesRead}");
             }
+            _codec?.DecodePage(0, buffer, buffer);
             ApplyHeaderMask(buffer);
         }
     }
@@ -371,6 +389,52 @@ public sealed class PageChannel : IDisposable
     }
 
     private long GetPageOffset(int pageNumber) => (long)pageNumber * _format.PageSize;
+
+    private void WriteEncodedPage(byte[] page, int pageNumber, int pageOffset)
+    {
+        if (_codec == null)
+        {
+            WriteAt(page, pageOffset, _format.PageSize - pageOffset,
+                GetPageOffset(pageNumber) + pageOffset);
+            return;
+        }
+
+        // Encryption is page-based.  Merge a partial logical update with the
+        // current page before encoding so no CBC block is written in isolation.
+        byte[] logical = page;
+        if (pageOffset != 0)
+        {
+            logical = new byte[_format.PageSize];
+            if (pageNumber == 0)
+            {
+                ReadRootPage(logical);
+            }
+            else
+            {
+                ReadPage(logical, pageNumber);
+            }
+            Array.Copy(page, pageOffset, logical, pageOffset, _format.PageSize - pageOffset);
+        }
+
+        byte[] encoded = new byte[_format.PageSize];
+        if (pageNumber == 0)
+        {
+            ApplyHeaderMask(logical);
+            try
+            {
+                _codec.EncodePage(pageNumber, logical, encoded);
+            }
+            finally
+            {
+                ApplyHeaderMask(logical);
+            }
+        }
+        else
+        {
+            _codec.EncodePage(pageNumber, logical, encoded);
+        }
+        WriteAt(encoded, 0, _format.PageSize, GetPageOffset(pageNumber));
+    }
 
     private void ValidateBuffer(byte[] buffer)
     {
@@ -406,17 +470,32 @@ public sealed class PageChannel : IDisposable
     {
         lock (_sync)
         {
-            if (!_disposed)
+            if (_disposed)
+            {
+                return;
+            }
+
+            try
             {
                 if (_dirtyPages.Count > 0)
                 {
                     FlushDirtyPages();
                     _channel.Flush();
                 }
+            }
+            finally
+            {
                 _disposed = true;
-                if (_closeChannel)
+                try
                 {
-                    _channel.Dispose();
+                    _codec?.Dispose();
+                }
+                finally
+                {
+                    if (_closeChannel)
+                    {
+                        _channel.Dispose();
+                    }
                 }
             }
         }

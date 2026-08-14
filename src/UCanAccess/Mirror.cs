@@ -236,8 +236,12 @@ public sealed class Mirror : IDisposable
         // expose saved SELECT queries as views so they can be queried like tables
         foreach (QueryDef query in _accessDb.GetQueries())
         {
-            if (query.Type != QueryType.Select)
+            if (query.Type != QueryType.Select || query.HasParameters)
             {
+                // Parameterized QueryDefs cannot be represented by a SQLite
+                // view because their values are supplied by the outer
+                // ADO.NET command.  UCanAccessCommand expands those QueryDefs
+                // into a derived table at execution time instead.
                 continue;
             }
             try

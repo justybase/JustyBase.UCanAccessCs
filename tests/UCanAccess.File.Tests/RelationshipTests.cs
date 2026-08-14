@@ -46,6 +46,46 @@ public class RelationshipTests
     }
 
     [Fact]
+    public void One_to_one_relationship_creates_unique_index_and_rejects_duplicates()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-one-to-one-{Guid.NewGuid():N}.mdb");
+        try
+        {
+            using var db = Database.Create(path);
+            db.CreateTable("parent", new[]
+            {
+                new ColumnBuilder("id", DataType.Long),
+            }, new[]
+            {
+                new IndexBuilder("pk_parent").WithPrimaryKey().WithColumns("id"),
+            });
+            Table child = db.CreateTable("child", new[]
+            {
+                new ColumnBuilder("id", DataType.Long),
+                new ColumnBuilder("parent_id", DataType.Long),
+            }, new[]
+            {
+                new IndexBuilder("pk_child").WithPrimaryKey().WithColumns("id"),
+            });
+            db.GetTable("parent")!.AddRow(new object?[] { 1 });
+
+            db.AddRelationship(new RelationshipBuilder("one_to_one", "parent", "child")
+                .WithColumns("id", "parent_id")
+                .WithOneToOne());
+            Assert.True(db.GetIndexInfo("child").Single(index => index.ForeignKey).Unique);
+
+            child = db.GetTable("child")!;
+            child.AddRow(new object?[] { 1, 1 });
+            Assert.Throws<DatabaseException>(() => child.AddRow(new object?[] { 2, 1 }));
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+            System.IO.File.Delete(Path.ChangeExtension(path, ".ldb"));
+        }
+    }
+
+    [Fact]
     public void Relationship_flag_constants()
     {
         Assert.Equal(0x00000001, Relationship.OneToOneFlag);

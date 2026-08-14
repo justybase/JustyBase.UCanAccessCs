@@ -1,7 +1,9 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace UCanAccess;
 
@@ -15,6 +17,7 @@ public sealed class UCanAccessCommand : DbCommand
     private CommandType _commandType = CommandType.Text;
     private readonly UCanAccessParameterCollection _parameters = new();
     private UCanAccessTransaction? _transaction;
+    private Mirror? _activeMirror;
 
     internal UCanAccessCommand(UCanAccessConnection connection)
     {
@@ -62,6 +65,7 @@ public sealed class UCanAccessCommand : DbCommand
 
     public override void Cancel()
     {
+        _activeMirror?.CancelActiveCommands();
         _connection?.MirrorIfCreated?.CancelActiveCommands();
     }
 
@@ -74,8 +78,11 @@ public sealed class UCanAccessCommand : DbCommand
             throw new InvalidOperationException("The connection is not open.");
         }
         connection.EnsureDatabaseCurrent();
-        Mirror mirror = connection.Mirror;
-        AccessSqlTranslator.Translate(CommandText, out int parameterCount, out IReadOnlyList<string>? names,
+        UCanAccessTransaction? transaction = GetTransaction(connection);
+        Mirror mirror = transaction?.QueryMirror ?? connection.Mirror;
+        File.Database queryDatabase = transaction?.QueryDatabase ?? connection.AccessDatabase;
+        string effectiveCommandText = SavedQueryExpander.Expand(CommandText, queryDatabase);
+        AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
             mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
         if (parameterCount == 0 && _parameters.Count != 0)
         {
@@ -145,9 +152,10 @@ public sealed class UCanAccessCommand : DbCommand
             var batch = new List<(string Sql, IReadOnlyList<object?>? Parameters)>(statements.Length);
             foreach (string statement in statements)
             {
-                IReadOnlyList<object?>? parameters = BindDmlParameters(statement,
+                string expandedStatement = SavedQueryExpander.Expand(statement, connection.AccessDatabase);
+                IReadOnlyList<object?>? parameters = BindDmlParameters(expandedStatement,
                     _parameters.Cast<UCanAccessParameter>().ToList());
-                batch.Add((statement, parameters));
+                batch.Add((expandedStatement, parameters));
             }
             return connection.ExecuteDmlBatchAtomically(batch);
         }
@@ -157,6 +165,16 @@ public sealed class UCanAccessCommand : DbCommand
             total += ExecuteSingle(connection, statement);
         }
         return total;
+    }
+
+    public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ExecuteNonQuery();
+        }, cancellationToken);
     }
 
     private int ExecuteSingle(UCanAccessConnection connection, string sql)
@@ -169,11 +187,13 @@ public sealed class UCanAccessCommand : DbCommand
         string kind = FirstWord(sql);
         if (kind is "INSERT" or "UPDATE" or "DELETE")
         {
+            UCanAccessTransaction? transaction = GetTransaction(connection);
+            sql = SavedQueryExpander.Expand(sql,
+                transaction?.QueryDatabase ?? connection.AccessDatabase);
             var supplied = _parameters.Cast<UCanAccessParameter>().ToList();
             IReadOnlyList<object?>? parameters = BindDmlParameters(sql, supplied);
 
             // inside a transaction, buffer the statement until commit
-            UCanAccessTransaction? transaction = GetTransaction(connection);
             if (transaction != null)
             {
                 return transaction.AddPending(sql, parameters);
@@ -188,9 +208,9 @@ public sealed class UCanAccessCommand : DbCommand
             {
                 return transaction.AddPending(sql, null);
             }
-            if (AccessDdl.IsIndexMutation(sql))
+            if (AccessDdl.RequiresAtomicFileMutation(sql))
             {
-                return connection.ExecuteIndexDdlAtomically(sql);
+                return connection.ExecuteDdlAtomically(sql);
             }
             Mirror? transientMirror = null;
             try
@@ -436,8 +456,19 @@ public sealed class UCanAccessCommand : DbCommand
             }
             else if (c == ';')
             {
-                result.Add(sb.ToString());
-                sb.Clear();
+                // A saved Access QueryDef may contain an internal semicolon
+                // between its PARAMETERS declaration and SELECT body.  Keep
+                // that delimiter in the CREATE VIEW statement; only the next
+                // semicolon terminates the command script.
+                if (IsQueryDefParameterTerminator(sb))
+                {
+                    sb.Append(c);
+                }
+                else
+                {
+                    result.Add(sb.ToString());
+                    sb.Clear();
+                }
             }
             else
             {
@@ -451,6 +482,15 @@ public sealed class UCanAccessCommand : DbCommand
         return result.ToArray();
     }
 
+    private static bool IsQueryDefParameterTerminator(StringBuilder statement)
+    {
+        string text = statement.ToString();
+        return !text.Contains(';')
+            && Regex.IsMatch(text,
+                @"^\s*CREATE\s+VIEW\b.*\bAS\s+PARAMETERS\b",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+    }
+
     public override object? ExecuteScalar()
     {
         using var reader = ExecuteDbDataReader(CommandBehavior.SingleRow);
@@ -459,6 +499,16 @@ public sealed class UCanAccessCommand : DbCommand
             return reader.IsDBNull(0) ? null : reader.GetValue(0);
         }
         return null;
+    }
+
+    public override Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ExecuteScalar();
+        }, cancellationToken);
     }
 
     protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
@@ -472,16 +522,20 @@ public sealed class UCanAccessCommand : DbCommand
         }
 
         Mirror? transientMirror = null;
+        bool readerHandedOff = false;
         try
         {
         UCanAccessTransaction? transaction = GetTransaction(connection);
-        Mirror queryMirror = transaction?.QueryMirror
+            Mirror queryMirror = transaction?.QueryMirror
             ?? (connection.KeepMirror
                 ? connection.Mirror
                 : transientMirror = connection.CreateMirrorFor(connection.AccessDatabase));
-        string effectiveCommandText = CommandText;
+        _activeMirror = queryMirror;
+        string effectiveCommandText = RewriteIdentitySelect(CommandText, connection.LastInsertedId);
+        effectiveCommandText = SavedQueryExpander.Expand(effectiveCommandText,
+            transaction?.QueryDatabase ?? connection.AccessDatabase);
         var suppliedParameters = _parameters.Cast<UCanAccessParameter>().ToList();
-        if (CrosstabTranslator.TryBuildDynamicValueQuery(CommandText, out string valueQuery))
+        if (CrosstabTranslator.TryBuildDynamicValueQuery(effectiveCommandText, out string valueQuery))
         {
             string translatedValueQuery = AccessSqlTranslator.Translate(valueQuery,
                 out int valueParameterCount, out IReadOnlyList<string>? valueNames,
@@ -499,7 +553,7 @@ public sealed class UCanAccessCommand : DbCommand
                     }
                 }
             }
-            effectiveCommandText = CrosstabTranslator.AddPivotValues(CommandText, pivotValues);
+            effectiveCommandText = CrosstabTranslator.AddPivotValues(effectiveCommandText, pivotValues);
         }
 
         string sql = AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
@@ -591,25 +645,43 @@ public sealed class UCanAccessCommand : DbCommand
                 "The command has parameters, but its SQL contains no parameter placeholders.");
         }
             bool closeConnection = (behavior & CommandBehavior.CloseConnection) != 0;
-            Action? readerCleanup = transientMirror is null && !closeConnection
-                ? null
-                : () =>
+            Action readerCleanup = () =>
                 {
                     transientMirror?.Dispose();
                     if (closeConnection)
                     {
                         connection.Close();
                     }
+                    if (ReferenceEquals(_activeMirror, queryMirror))
+                    {
+                        _activeMirror = null;
+                    }
                 };
             DbDataReader reader = queryMirror.ExecuteReader(sql, parameters, CommandTimeout,
                 readerCleanup, behavior);
+        readerHandedOff = true;
         return reader;
         }
         catch
         {
+            if (!readerHandedOff)
+            {
+                _activeMirror = null;
+            }
             transientMirror?.Dispose();
             throw;
         }
+    }
+
+    protected override Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run<DbDataReader>(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ExecuteDbDataReader(behavior);
+        }, cancellationToken);
     }
 
     private static void ValidateParameterDirection(UCanAccessParameter parameter)
@@ -619,6 +691,57 @@ public sealed class UCanAccessCommand : DbCommand
             throw new NotSupportedException(
                 $"Parameter direction {parameter.Direction} is not supported; only input parameters are supported.");
         }
+    }
+
+    private static string RewriteIdentitySelect(string sql, long? lastInsertedId)
+    {
+        string trimmed = sql.Trim();
+        while (trimmed.EndsWith(';'))
+        {
+            trimmed = trimmed[..^1].TrimEnd();
+        }
+
+        Match match = Regex.Match(trimmed, @"^SELECT\s+@@IDENTITY(?=\s|$)(?<tail>.*)$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        if (!match.Success)
+        {
+            return sql;
+        }
+
+        string tail = match.Groups["tail"].Value.Trim();
+        string alias;
+        if (tail.Length == 0)
+        {
+            alias = "[@@IDENTITY]";
+        }
+        else
+        {
+            if (tail.Length >= 2 && tail.StartsWith("AS", StringComparison.OrdinalIgnoreCase)
+                && (tail.Length == 2 || char.IsWhiteSpace(tail[2])))
+            {
+                tail = tail[2..].Trim();
+            }
+            if (!IsIdentityAlias(tail))
+            {
+                return sql;
+            }
+            alias = tail;
+        }
+
+        string value = lastInsertedId?.ToString(CultureInfo.InvariantCulture) ?? "NULL";
+        return $"SELECT {value} AS {alias}";
+    }
+
+    private static bool IsIdentityAlias(string alias)
+    {
+        if (alias.Length >= 2 && ((alias[0] == '[' && alias[^1] == ']')
+                || (alias[0] == '"' && alias[^1] == '"')))
+        {
+            return true;
+        }
+
+        return Regex.IsMatch(alias, @"^[A-Za-z_][A-Za-z0-9_$#@]*$",
+            RegexOptions.CultureInvariant);
     }
 
     private static object?[]? BindQueryParameters(int parameterCount, IReadOnlyList<string>? names,

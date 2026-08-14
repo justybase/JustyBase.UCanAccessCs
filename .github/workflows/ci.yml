@@ -53,6 +53,35 @@ jobs:
       - name: Test ADO.NET provider
         run: dotnet test tests/UCanAccess.Tests/UCanAccess.Tests.csproj -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
 
+      - name: Test pure .NET Access encryption codec
+        run: dotnet test tests/UCanAccess.AccessCrypto.Tests/UCanAccess.AccessCrypto.Tests.csproj -c Release --no-build --no-restore
+
+      # Packaging smoke test only.  Release publication remains a separate,
+      # explicit workflow and is intentionally not performed by CI.
+      - name: Pack and inspect local NuGet artifacts
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:GITHUB_WORKSPACE 'artifacts/packages'
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          dotnet pack src/UCanAccess/UCanAccess.csproj -c Release --no-build --no-restore --output $output
+          dotnet pack src/UCanAccess.File/UCanAccess.File.csproj -c Release --no-build --no-restore --output $output
+          dotnet pack src/UCanAccess.AccessCrypto/UCanAccess.AccessCrypto.csproj -c Release --no-build --no-restore --output $output
+          $packages = @(Get-ChildItem -LiteralPath $output -Filter '*.nupkg')
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three local packages, found $($packages.Count)."
+          }
+          $expected = @(
+            'JustyBase.UCanAccessCs',
+            'JustyBase.UCanAccess.File',
+            'JustyBase.UCanAccess.AccessCrypto'
+          )
+          foreach ($id in $expected) {
+            if (-not ($packages.Name -match "^$([regex]::Escape($id))\.") ) {
+              throw "Package '$id' was not produced."
+            }
+          }
+
       - name: Upload coverage
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v6
@@ -93,3 +122,48 @@ jobs:
 
       - name: Verify oracles are up to date
         run: git diff --exit-code -- tests/fixtures/oracle tests/fixtures/sql
+
+  # Microsoft Access is not installed on GitHub-hosted runners.  An
+  # administrator can opt into this job on a self-hosted Windows runner with
+  # Access/DAO by setting the repository variable UCANACCESS_ACCESS_COM=true
+  # and the secret UCANACCESS_ACCESS_FIXTURE_PASSWORD.
+  access-com:
+    # Never run repository pull-request code on the Access runner.  Only
+    # trusted pushes to main/master/tags and an explicitly dispatched run may use it.
+    if: vars.UCANACCESS_ACCESS_COM == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/'))))
+    timeout-minutes: 20
+    runs-on: [self-hosted, windows, access]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore UCanAccess.slnx
+
+      - name: Build
+        run: dotnet build UCanAccess.slnx -c Release --no-restore
+
+      - name: Generate COM complex-field fixtures
+        shell: pwsh
+        run: |
+          pwsh -File tools/AccessFixtures/Generate-ComplexFixture.ps1 `
+            -OutputPath tests/fixtures/generated/complex.accdb
+          pwsh -File tools/AccessFixtures/Generate-VersionFixture.ps1 `
+            -OutputPath tests/fixtures/generated/version.accdb
+
+      - name: Verify managed complex-field round-trips
+        env:
+          UCANACCESS_VERSION_FIXTURE: ${{ github.workspace }}/tests/fixtures/generated/version.accdb
+        run: >-
+          dotnet test tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj
+          -c Release --no-build --no-restore
+          --filter "FullyQualifiedName~ComplexTypeTests|FullyQualifiedName~VersionHistoryTests"
+
+      - name: Verify encrypted ACCDB interoperability
+        env:
+          UCANACCESS_ACCESS_COM: 'true'
+          UCANACCESS_ACCESS_FIXTURE_PASSWORD: ${{ secrets.UCANACCESS_ACCESS_FIXTURE_PASSWORD }}
+        run: dotnet test tests/UCanAccess.AccessCrypto.Tests/UCanAccess.AccessCrypto.Tests.csproj -c Release --no-build --no-restore --filter 'Category=AccessCom'

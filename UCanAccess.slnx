@@ -3,9 +3,11 @@
     <Project Path="src/UCanAccess.Console/UCanAccess.Console.csproj" />
     <Project Path="src/UCanAccess.File/UCanAccess.File.csproj" />
     <Project Path="src/UCanAccess/UCanAccess.csproj" />
+    <Project Path="src/UCanAccess.AccessCrypto/UCanAccess.AccessCrypto.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/UCanAccess.File.Tests/UCanAccess.File.Tests.csproj" />
     <Project Path="tests/UCanAccess.Tests/UCanAccess.Tests.csproj" />
+    <Project Path="tests/UCanAccess.AccessCrypto.Tests/UCanAccess.AccessCrypto.Tests.csproj" />
   </Folder>
 </Solution>

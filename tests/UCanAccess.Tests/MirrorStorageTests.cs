@@ -85,4 +85,35 @@ public sealed class MirrorStorageTests
             System.IO.File.Delete(source);
         }
     }
+
+    [Fact]
+    public void Prevent_reloading_keeps_the_current_file_snapshot()
+    {
+        string source = Path.Combine(Path.GetTempPath(), $"ucanaccess_no_reload_{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Fixture("generated/genEmpty.mdb"), source, true);
+        try
+        {
+            using var connection = UCanAccessFactory.Instance.CreateConnection()!;
+            connection.ConnectionString = $"Data Source={source};Read Only=true;preventReloading=true";
+            connection.Open();
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT count(*) FROM t_empty";
+                Assert.Equal(0L, command.ExecuteScalar());
+            }
+
+            using (var database = UCanAccess.File.Database.Open(source, readOnly: false))
+            {
+                database.GetTable("t_empty")!.AddRow(new object?[] { null, "external" });
+            }
+
+            using var unchanged = connection.CreateCommand();
+            unchanged.CommandText = "SELECT count(*) FROM t_empty";
+            Assert.Equal(0L, unchanged.ExecuteScalar());
+        }
+        finally
+        {
+            System.IO.File.Delete(source);
+        }
+    }
 }

@@ -33,6 +33,12 @@ public sealed class ColumnBuilder
 
     public TextSortOrder? TextSortOrder { get; private set; }
 
+    /// <summary>
+    /// Access SQL expression stored as the column's DefaultValue property.
+    /// The expression is evaluated when an INSERT omits the column.
+    /// </summary>
+    public string? DefaultValue { get; private set; }
+
     public ColumnBuilder WithLength(int length)
     {
         if (length < 0)
@@ -87,6 +93,16 @@ public sealed class ColumnBuilder
         return this;
     }
 
+    public ColumnBuilder WithDefault(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            throw new ArgumentException("A default expression is required.", nameof(expression));
+        }
+        DefaultValue = expression.Trim();
+        return this;
+    }
+
     internal bool IsVariableLength => Type is DataType.Text or DataType.Memo or DataType.Ole or DataType.Binary
         or DataType.Unknown0D or DataType.Unknown11 or DataType.UnsupportedVarLen;
 
@@ -116,6 +132,13 @@ public sealed class IndexBuilder
     public bool Required { get; private set; }
 
     public bool IgnoreNulls { get; private set; }
+
+    internal bool ForeignKey { get; private set; }
+    internal byte RelatedTableType { get; private set; }
+    internal int RelatedIndexNumber { get; private set; } = -1;
+    internal int RelatedTablePageNumber { get; private set; }
+    internal bool RelatedCascadeUpdates { get; private set; }
+    internal bool RelatedCascadeDeletes { get; private set; }
 
     public IndexBuilder WithColumns(params string[] names)
     {
@@ -157,6 +180,18 @@ public sealed class IndexBuilder
     public IndexBuilder WithIgnoreNulls(bool ignoreNulls = true)
     {
         IgnoreNulls = ignoreNulls;
+        return this;
+    }
+
+    internal IndexBuilder WithForeignKey(int relatedIndexNumber, int relatedTablePageNumber,
+        bool cascadeUpdates, bool cascadeDeletes)
+    {
+        ForeignKey = true;
+        RelatedTableType = 1;
+        RelatedIndexNumber = relatedIndexNumber;
+        RelatedTablePageNumber = relatedTablePageNumber;
+        RelatedCascadeUpdates = cascadeUpdates;
+        RelatedCascadeDeletes = cascadeDeletes;
         return this;
     }
 }
@@ -313,10 +348,8 @@ internal static class TableCreator
             // register in the system catalog
             // register in the system catalog (the object id of a table is its
             // table-definition page number, which is how the catalog is resolved)
-            byte[]? propertyBytes = PropertyMapCodec.WriteRequired(
-                columns.Where(column => column.Required).Select(column => column.Name),
-                database.TextEncoding,
-                database.Format.Charset == null);
+            byte[]? propertyBytes = PropertyMapCodec.WriteColumnProperties(
+                columns, database.TextEncoding, database.Format.Charset == null);
             database.AddToSystemCatalog(name, tdefPageNumber, Database.TypeTable, tdefPageNumber,
                 propertyBytes);
 
@@ -782,12 +815,13 @@ internal static class TableCreator
             PutInt(buffer, ref pos, MagicTableNumber);
             PutInt(buffer, ref pos, idxIdx); // index number
             PutInt(buffer, ref pos, idxIdx); // index data number
-            buffer[pos++] = 0; // related table type
-            PutInt(buffer, ref pos, InvalidIndexNumber); // related index num
-            PutInt(buffer, ref pos, 0); // related table page
-            buffer[pos++] = 0; // cascade updates
-            buffer[pos++] = 0; // cascade deletes
-            buffer[pos++] = idx.PrimaryKey ? PrimaryKeyIndexType : (byte)0; // index type
+            buffer[pos++] = idx.ForeignKey ? idx.RelatedTableType : (byte)0;
+            PutInt(buffer, ref pos, idx.ForeignKey ? idx.RelatedIndexNumber : InvalidIndexNumber);
+            PutInt(buffer, ref pos, idx.ForeignKey ? idx.RelatedTablePageNumber : 0);
+            buffer[pos++] = idx.RelatedCascadeUpdates ? (byte)1 : (byte)0;
+            buffer[pos++] = idx.RelatedCascadeDeletes ? (byte)1 : (byte)0;
+            buffer[pos++] = idx.PrimaryKey ? PrimaryKeyIndexType
+                : idx.ForeignKey ? (byte)2 : (byte)0;
             pos += format.SkipAfterIndexSlot;
         }
     }

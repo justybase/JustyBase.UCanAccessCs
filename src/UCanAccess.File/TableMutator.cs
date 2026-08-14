@@ -12,6 +12,11 @@ internal static class TableMutator
     /// <summary>adds a column to an existing table (ALTER TABLE ... ADD COLUMN)</summary>
     public static void AddColumn(Database database, Table table, ColumnBuilder column)
     {
+        if (column.DefaultValue == null && !column.Required && CanExtendDefinition(table))
+        {
+            AddColumnDefinition(database, table, column);
+            return;
+        }
         GuardRecreatable(database, table, "ALTER TABLE ... ADD COLUMN");
 
         var columns = table.Columns.Select(ToColumnBuilder).ToList();
@@ -40,10 +45,6 @@ internal static class TableMutator
 
     private static void GuardRecreatable(Database database, Table table, string operation)
     {
-        if (table.AutoNumbered)
-        {
-            throw new NotSupportedException($"{operation} on a table with an autonumber column is not supported yet.");
-        }
         if (database.GetRelationships(table.Name).Count > 0)
         {
             throw new NotSupportedException($"{operation} on a table with relationships is not supported yet.");
@@ -60,6 +61,95 @@ internal static class TableMutator
         }
     }
 
+    private static bool CanExtendDefinition(Table table)
+        => table.Indexes.Count == table.IndexDatas.Count
+            && !table.Columns.Any(column => column.Calculated
+                || column.Type is DataType.ExtDateTime or DataType.ComplexType
+                or DataType.Unknown0D or DataType.Unknown11 or DataType.UnsupportedFixedLen
+                or DataType.UnsupportedVarLen);
+
+    private static void AddColumnDefinition(Database database, Table original, ColumnBuilder column)
+    {
+        var columns = original.Columns.Select(ToColumnBuilder).ToList();
+        columns.Add(column);
+        var indexes = original.Indexes.Select(ToIndexBuilder).ToList();
+        var existing = CaptureExistingDefinition(original, indexes);
+        PageChannel pageChannel = database.PageChannel;
+        pageChannel.StartWrite();
+        try
+        {
+            IReadOnlyCollection<int> oldMetadata = original.MetadataPageNumbers;
+            var retainedIndexPages = existing.Indexes.Where(state => state != null)
+                .SelectMany(state => state!.OwnedPages).ToHashSet();
+            Table replacement = TableCreator.CreateTableDefinitionForExistingData(
+                database, original.Name, columns, indexes, existing);
+            PatchIndexTableDefinitionPointers(database, retainedIndexPages, replacement.TableDefPageNumber);
+            database.ReplaceTableDefinition(original.Name, original.TableDefPageNumber,
+                replacement.TableDefPageNumber);
+            database.RetargetForeignKeyIndexes(original.TableDefPageNumber,
+                replacement.TableDefPageNumber);
+
+            var retainedMetadata = replacement.MetadataPageNumbers.ToHashSet();
+            foreach (int page in oldMetadata)
+            {
+                if (!retainedMetadata.Contains(page))
+                {
+                    pageChannel.DeallocatePage(page);
+                }
+            }
+        }
+        finally
+        {
+            pageChannel.FinishWrite();
+        }
+    }
+
+    private static TableCreator.ExistingTableDefinition CaptureExistingDefinition(
+        Table table, List<IndexBuilder> requestedIndexes)
+    {
+        var existingByName = table.Indexes.ToDictionary(index => index.Name ?? string.Empty,
+            StringComparer.OrdinalIgnoreCase);
+        var states = new List<TableCreator.ExistingIndexDefinition?>(requestedIndexes.Count);
+        foreach (IndexBuilder builder in requestedIndexes)
+        {
+            if (!existingByName.TryGetValue(builder.Name, out IndexImpl? index))
+            {
+                states.Add(null);
+                continue;
+            }
+            states.Add(new TableCreator.ExistingIndexDefinition
+            {
+                RootPageNumber = index.IndexData.RootPageNumber,
+                UniqueEntryCount = index.IndexData.UniqueEntryCount,
+                OwnedPages = Table.EnumeratePages(index.IndexData.OwnedPages),
+            });
+        }
+        return new TableCreator.ExistingTableDefinition
+        {
+            OwnedPages = Table.EnumeratePages(table.OwnedPages),
+            FreeSpacePages = Table.EnumeratePages(table.FreeSpacePages),
+            LongValuePages = table.CollectLongValuePages().ToArray(),
+            Indexes = states,
+            RowCount = table.RowCount,
+            NextAutoNumber = table.LastLongAutoNumber,
+        };
+    }
+
+    private static void PatchIndexTableDefinitionPointers(Database database,
+        IEnumerable<int> pages, int tableDefinitionPage)
+    {
+        foreach (int pageNumber in pages)
+        {
+            byte[] page = new byte[database.Format.PageSize];
+            database.PageChannel.ReadPage(page, pageNumber);
+            page[4] = (byte)tableDefinitionPage;
+            page[5] = (byte)(tableDefinitionPage >> 8);
+            page[6] = (byte)(tableDefinitionPage >> 16);
+            page[7] = (byte)(tableDefinitionPage >> 24);
+            database.PageChannel.WritePage(page, pageNumber);
+        }
+    }
+
     /// <summary>
     /// Creates a new table with the same data but the given column/index set, then
     /// replaces the original (the new table keeps the original name).
@@ -71,6 +161,7 @@ internal static class TableMutator
             throw new InvalidOperationException("A table must retain at least one column.");
         }
         string tempName = "__ucanaccess_tmp_" + Guid.NewGuid().ToString("N")[..8];
+        int previousAutoNumber = original.LastLongAutoNumber;
         database.CreateTable(tempName, columns, indexes);
         try
         {
@@ -82,10 +173,17 @@ internal static class TableMutator
                 {
                     Column? sourceColumn = original.Columns.FirstOrDefault(c =>
                         c.Name.Equals(columns[i].Name, StringComparison.OrdinalIgnoreCase));
-                    values[i] = sourceColumn == null ? null : location.Row[sourceColumn.ColumnIndex];
+                    values[i] = sourceColumn == null
+                        ? columns[i].DefaultValue == null
+                            ? null
+                            : DefaultValueEvaluator.Evaluate(columns[i].DefaultValue!)
+                        : location.Row[sourceColumn.ColumnIndex];
                 }
-                target.AddRow(values);
+                target.AddRowPreservingAutoNumbers(values);
             }
+            target.PreserveLastLongAutoNumber(previousAutoNumber);
+            database.RetargetForeignKeyIndexes(original.TableDefPageNumber,
+                target.TableDefPageNumber);
             database.DeleteTable(original.Name);
             RenameTable(database, tempName, original.Name);
         }
@@ -131,6 +229,10 @@ internal static class TableMutator
         {
             builder.WithTextSortOrder(sortOrder);
         }
+        if (!string.IsNullOrWhiteSpace(column.DefaultValue))
+        {
+            builder.WithDefault(column.DefaultValue!);
+        }
         return builder;
     }
 
@@ -157,6 +259,11 @@ internal static class TableMutator
         {
             builder.WithIgnoreNulls();
         }
+        if (index.IsForeignKey)
+        {
+            builder.WithForeignKey(index.RelatedIndexNumber, index.RelatedTablePageNumber,
+                index.CascadeUpdates, index.CascadeDeletes);
+        }
         return builder;
     }
 
@@ -166,13 +273,9 @@ internal static class TableMutator
 
     /// <summary>saves a SELECT query as a view (CREATE VIEW)</summary>
     public static void CreateView(Database database, string viewName, string selectSql)
-    {
-        throw new NotSupportedException("CREATE VIEW is not supported.");
-    }
+        => QueryDefWriter.Create(database, viewName, selectSql);
 
     /// <summary>drops a saved query / view (DROP VIEW)</summary>
     public static void DropView(Database database, string viewName)
-    {
-        throw new NotSupportedException("DROP VIEW is not supported.");
-    }
+        => QueryDefWriter.Drop(database, viewName);
 }

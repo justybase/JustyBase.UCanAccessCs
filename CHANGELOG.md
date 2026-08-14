@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added Access SQL compatibility for `SELECT @@IDENTITY`, `ALTER TABLE ...
+  RENAME TO`, and adding a primary-key index with `ALTER TABLE`.
+- Added upstream-compatible connection-string aliases for persistent
+  `keepMirror=<path>`, `memory`, `immediatelyReleaseResources`/
+  `singleConnection`, `preventReloading`, and `sysSchema`.
+- Added the optional `JustyBase.UCanAccess.AccessCrypto` package with a pure
+  .NET Agile-encryption page codec for Access 2010+ `.accdb` files, including
+  opt-in Access COM round-trip fixtures and tests.
+
 ## 1.1.0
 
 - Added the compatibility matrix for the ADO.NET behavior contract.
