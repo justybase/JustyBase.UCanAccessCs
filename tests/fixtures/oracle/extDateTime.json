@@ -1,0 +1,26 @@
+{
+  "file": "extDateTime.accdb",
+  "tables": [
+    {
+      "name": "t_ext",
+      "structure": {"rowCount": 6, "columnCount": 3, "indexCount": 0},
+      "columns": [
+        {"name": "id", "type": "LONG", "length": 4, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "dt", "type": "EXT_DATE_TIME", "length": 42, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false},
+        {"name": "note", "type": "TEXT", "length": 30, "autoNumber": false, "calculated": false, "precision": 0, "scale": 0, "required": false}
+      ],
+      "indexes": [
+      ],
+      "rows": [
+        [1,{"dt": "2024-01-02T03:04:05.123456"},"modern"],
+        [2,{"dt": "1899-12-30T00:00"},"base"],
+        [3,null,"null dt"],
+        [4,{"dt": "9999-12-31T23:59:59.999999"},"max"],
+        [5,{"dt": "0001-01-01T00:00"},"year one"],
+        [6,{"dt": "2024-01-02T03:04:05.678900"},"frac"]
+      ]
+    }
+  ],
+  "relationships": [
+  ]
+}

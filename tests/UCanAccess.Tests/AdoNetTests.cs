@@ -448,6 +448,33 @@ public class AdoNetTests
     }
 
     [Fact]
+    public void Extended_date_time_values_read_from_access_file()
+    {
+        using var conn = Open("extDateTime.accdb");
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, dt FROM t_ext ORDER BY id";
+        using var reader = cmd.ExecuteReader();
+
+        Assert.True(reader.Read());
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal(new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Unspecified).AddTicks(1_234_560),
+            reader.GetDateTime(1));
+        Assert.True(reader.Read());
+        Assert.Equal(new DateTime(1899, 12, 30, 0, 0, 0, DateTimeKind.Unspecified), reader.GetDateTime(1));
+        Assert.True(reader.Read());
+        Assert.True(reader.IsDBNull(1));
+        Assert.True(reader.Read());
+        Assert.Equal(new DateTime(9999, 12, 31, 23, 59, 59, DateTimeKind.Unspecified).AddTicks(9_999_990),
+            reader.GetDateTime(1));
+        Assert.True(reader.Read());
+        Assert.Equal(DateTime.MinValue, reader.GetDateTime(1));
+        Assert.True(reader.Read());
+        Assert.Equal(new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Unspecified).AddTicks(6_789_000),
+            reader.GetDateTime(1));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
     public void Extra_parameters_without_placeholders_are_rejected()
     {
         using var conn = Open("pivot.mdb");

@@ -327,13 +327,44 @@ public class DdlParityTests
             var javaRows = ExtractRows(javaJson, "t_detail");
             Assert.Equal(javaRows.Count, portRows.Count);
             Assert.Equal(javaRows, portRows);
-            Assert.Equal(0, javaRows.Count);
+            Assert.Empty(javaRows);
         }
         finally
         {
             System.IO.File.Delete(portCopy);
             System.IO.File.Delete(javaCopy);
             System.IO.File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public void Extended_date_time_write_remains_readable_by_java_jackcess()
+    {
+        if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
+            || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
+        {
+            _output.WriteLine("SKIPPED: java/jars/classes not available");
+            throw Xunit.Sdk.SkipException.ForSkip("java/jars/classes not available");
+        }
+
+        string[] statements =
+        {
+            "UPDATE t_ext SET dt = #7/8/2026 9:10:11# WHERE id = 1",
+        };
+
+        string portCopy = TempCopy(Fixture("extDateTime.accdb"));
+        try
+        {
+            ApplyViaPort(portCopy, statements);
+
+            string jackJar = FindJar("jackcess-5.1.5.jar")!;
+            string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
+            string portJson = RunDbDump(jackJar, classesDir, portCopy);
+            Assert.Contains("2026-07-08T09:10:11", portJson);
+        }
+        finally
+        {
+            System.IO.File.Delete(portCopy);
         }
     }
 }

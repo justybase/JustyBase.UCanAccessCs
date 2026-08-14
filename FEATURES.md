@@ -15,6 +15,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | Jet 4 / Access 2000–2003 `.mdb` read/write | ✅ | Rows, long values, indexes, links, and supported DDL. |
 | Access 2007 `.accdb` read/write | ✅ | Verified with the bundled fixture and Java reader. |
 | Access 2010/2016 `.accdb` read/write | ✅ | Verified with bundled fixtures. |
+| Existing `EXT_DATE_TIME` columns | 🟡 | Existing columns can be read and written with 100-nanosecond CLR `DateTime` precision; creating a new `EXT_DATE_TIME` column remains unsupported. |
 | Calculated-column values | 🟡 | Values can be read; table recreation/DDL on calculated tables is rejected. |
 | Complex types, attachments, multi-value fields | 🟡 | Existing Access fields are exposed as typed CLR arrays and can be written through their flat child tables; creating a new complex field remains unsupported. |
 | Password-encrypted databases | 🟡 | Optional `JustyBase.UCanAccess.AccessCrypto` opens and writes modern Agile-encrypted `.accdb` files; the core package remains codec-free. Legacy `.mdb` encryption and unsupported Access profiles remain rejected. |

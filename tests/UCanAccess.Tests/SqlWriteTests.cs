@@ -103,6 +103,39 @@ public class SqlWriteTests
     }
 
     [Fact]
+    public void Extended_date_time_write_roundtrip_preserves_ticks()
+    {
+        string tmp = TempCopy(Fixture("extDateTime.accdb"));
+        DateTime expected = new DateTime(2026, 7, 8, 9, 10, 11, DateTimeKind.Unspecified)
+            .AddTicks(7_654_321);
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "INSERT INTO t_ext (id, dt, note) VALUES (?, ?, ?)";
+                foreach (object value in new object[] { 7, expected, "port write" })
+                {
+                    var parameter = cmd.CreateParameter();
+                    parameter.Value = value;
+                    cmd.Parameters.Add(parameter);
+                }
+                Assert.Equal(1, cmd.ExecuteNonQuery());
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT dt FROM t_ext WHERE id = 7";
+                Assert.Equal(expected, cmd.ExecuteScalar());
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void Insert_select_roundtrip()
     {
         string tmp = TempCopy(Fixture("sqljoin.mdb"));

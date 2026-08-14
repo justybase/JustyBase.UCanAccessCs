@@ -342,7 +342,7 @@ public class DifferentialTests
 
     /// <summary>
     /// Formats a DateTime the same way Java's <c>LocalDateTime.toString()</c> formats
-    /// a value with millisecond precision (seconds omitted when zero).
+    /// a value, retaining the available fractional precision (seconds omitted when zero).
     /// </summary>
     private static string FormatDateTime(DateTime dt)
     {
@@ -357,9 +357,12 @@ public class DifferentialTests
         {
             return baseStr;
         }
-        // fraction is in ms (10000 ticks); format 3 digits, trim trailing zeros
-        int ms = fraction / 10000;
-        string msStr = ms.ToString("000").TrimEnd('0');
-        return baseStr + "." + msStr;
+        long nanos = (long)fraction * 100L;
+        string fractionStr = nanos % 1_000_000L == 0
+            ? (nanos / 1_000_000L).ToString("000")
+            : nanos % 1_000L == 0
+                ? (nanos / 1_000L).ToString("000000")
+                : nanos.ToString("000000000");
+        return baseStr + "." + fractionStr;
     }
 }

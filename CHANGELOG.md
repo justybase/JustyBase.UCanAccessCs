@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read/write support for existing Access `EXT_DATE_TIME` columns using
+  the Jackcess wire format, including 100-nanosecond `DateTime` precision and
+  Java Jackcess read-back verification. Creating new `EXT_DATE_TIME` columns
+  remains unsupported.
 - Added `MirrorReader.GetStream`/`GetTextReader` overrides (the ADO.NET
   `DbDataReader` defaults throw), so BLOB/OLE and text columns can be read
   through stream-based readers.

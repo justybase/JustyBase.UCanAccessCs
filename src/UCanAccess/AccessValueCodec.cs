@@ -12,6 +12,7 @@ namespace UCanAccess;
 internal static class AccessValueCodec
 {
     private const string DateFormat = "yyyy-MM-dd HH:mm:ss.fff";
+    private const string ExtendedDateFormat = "yyyy-MM-dd HH:mm:ss.fffffff";
 
     public static object? ToSqlite(object? value, Column? column = null)
         => value switch
@@ -38,8 +39,8 @@ internal static class AccessValueCodec
             ulong number when number <= long.MaxValue => (long)number,
             float number => number.ToString("R", CultureInfo.InvariantCulture),
             double number => number.ToString("R", CultureInfo.InvariantCulture),
-            DateTime dateTime => FormatDate(dateTime),
-            DateTimeOffset dateTimeOffset => FormatDate(dateTimeOffset.DateTime),
+            DateTime dateTime => FormatDate(dateTime, column?.Type == DataType.ExtDateTime),
+            DateTimeOffset dateTimeOffset => FormatDate(dateTimeOffset.DateTime, column?.Type == DataType.ExtDateTime),
             Guid guid => guid.ToString("D"),
             string text when column?.Type == DataType.Money && ExactDecimal.TryParse(text, out ExactDecimal money)
                 => money.ToFixedString(4),
@@ -133,10 +134,15 @@ internal static class AccessValueCodec
     }
 
     public static string FormatDate(DateTime value)
-        => DateTime.SpecifyKind(value, DateTimeKind.Unspecified).ToString(DateFormat, CultureInfo.InvariantCulture);
+        => FormatDate(value, extended: false);
+
+    private static string FormatDate(DateTime value, bool extended)
+        => DateTime.SpecifyKind(value, DateTimeKind.Unspecified)
+            .ToString(extended ? ExtendedDateFormat : DateFormat, CultureInfo.InvariantCulture);
 
     private static readonly string[] DateFormats =
     {
+        ExtendedDateFormat,
         DateFormat,
         "yyyy-MM-dd HH:mm:ss",
         "yyyy-MM-dd HH:mm",

@@ -334,12 +334,14 @@ public sealed class Column
 
     private static DateTime ReadExtendedDateValue(byte[] data, int offset)
     {
-        // format: <19digits>:<19digits>:7 0x00
+        // Format: 19 day digits, ':', 12 second digits, 7 subsecond-tick
+        // digits, and the ':7\0' precision trailer. The extended-date epoch is
+        // the start of year 1, unlike the OLE Automation date epoch.
         long numDays = ReadExtDateLong(data, offset, 19);
         long seconds = ReadExtDateLong(data, offset + 20, 12);
-        long nanos = ReadExtDateLong(data, offset + 32, 7) * 100L;
-        var baseLdt = new DateTime(1899, 12, 30, 0, 0, 0, DateTimeKind.Unspecified);
-        return baseLdt.AddDays(numDays).AddSeconds(seconds).AddTicks(nanos / 100);
+        long subsecondTicks = ReadExtDateLong(data, offset + 32, 7);
+        var baseLdt = new DateTime(1, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        return baseLdt.AddDays(numDays).AddSeconds(seconds).AddTicks(subsecondTicks);
     }
 
     private static long ReadExtDateLong(byte[] data, int offset, int numChars)
@@ -619,9 +621,40 @@ public sealed class Column
             case DataType.BigInt:
                 return WriteInt64(Convert.ToInt64(ToNumber(value), System.Globalization.CultureInfo.InvariantCulture), bigEndian);
             case DataType.ExtDateTime:
-                throw new DatabaseException("Writing EXT_DATE_TIME values is not supported yet.");
+                return WriteExtendedDateValue(value);
             default:
                 throw new DatabaseException($"Unsupported data type: {Type}");
+        }
+    }
+
+    private static byte[] WriteExtendedDateValue(object? value)
+    {
+        DateTime dateTime = ToDateTime(value);
+        DateTime baseDate = new(1, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        long numDays = (dateTime.Date - baseDate.Date).Days;
+        long seconds = dateTime.TimeOfDay.Ticks / TimeSpan.TicksPerSecond;
+        long subsecondTicks = dateTime.TimeOfDay.Ticks % TimeSpan.TicksPerSecond;
+
+        var bytes = new byte[42];
+        WriteExtendedDateLong(bytes, 0, numDays, 19);
+        bytes[19] = (byte)':';
+        WriteExtendedDateLong(bytes, 20, seconds, 12);
+        WriteExtendedDateLong(bytes, 32, subsecondTicks, 7);
+        bytes[39] = (byte)':';
+        bytes[40] = (byte)'7';
+        return bytes;
+    }
+
+    private static void WriteExtendedDateLong(byte[] bytes, int offset, long value, int digits)
+    {
+        for (int i = offset + digits - 1; i >= offset; i--)
+        {
+            bytes[i] = (byte)('0' + (value % 10));
+            value /= 10;
+        }
+        if (value != 0)
+        {
+            throw new DatabaseException("EXT_DATE_TIME value exceeds its storage range.");
         }
     }
 
