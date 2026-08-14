@@ -45,7 +45,7 @@ misleading name.
 
 | Area | Status | Next action |
 |---|---|---|
-| `DbConnection`, `DbCommand`, `DbDataReader` | Supported | Add API contract tests for every override |
+| `DbConnection`, `DbCommand`, `DbDataReader` | Supported | `GetStream`/`GetTextReader` overrides covered by `AdoNetTests.Reader_get_stream_and_get_text_reader_read_columns`; add API contract tests for every override |
 | Input parameters | Supported | Add parameterized Java oracle scripts |
 | Output/return parameters | Unsupported | Document as input-only or implement where meaningful |
 | Transactions | Supported | Atomic staging and transaction tests | Add linked-table cases |

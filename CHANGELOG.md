@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `MirrorReader.GetStream`/`GetTextReader` overrides (the ADO.NET
+  `DbDataReader` defaults throw), so BLOB/OLE and text columns can be read
+  through stream-based readers.
 - Added SQL-corpus parity coverage for qualified `table.*` projections
   (`SELECT t_detail.*`, alias-qualified `d.*` in joins, and bracketed
   `[t_detail].*`) against Java UCanAccess 5.1.6.

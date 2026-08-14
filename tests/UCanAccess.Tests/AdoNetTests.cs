@@ -426,6 +426,28 @@ public class AdoNetTests
     }
 
     [Fact]
+    public void Reader_get_stream_and_get_text_reader_read_columns()
+    {
+        using var conn = Open("generated/genAllTypes.mdb");
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT bin, name FROM t_alltypes WHERE id = 1";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+
+        using (Stream stream = reader.GetStream(0))
+        using (var buffer = new MemoryStream())
+        {
+            stream.CopyTo(buffer);
+            Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, buffer.ToArray());
+        }
+        using (TextReader text = reader.GetTextReader(1))
+        {
+            Assert.Equal("Alpha", text.ReadToEnd());
+        }
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
     public void Extra_parameters_without_placeholders_are_rejected()
     {
         using var conn = Open("pivot.mdb");

@@ -65,7 +65,7 @@ Legend: ✅ supported, 🟡 partial/limited, ❌ unsupported.
 | DbParameter/parameter collection | ✅ | Case-insensitive named lookup and input parameters. |
 | DbTransaction | ✅ | One active transaction per connection; rollback on close/dispose. |
 | GetSchema tables/columns/indexes/keys/views | 🟡 | Core collections and restrictions are implemented; column defaults and DDL-created foreign keys are exposed through the schema/relationship metadata. |
-| Result-set type metadata | ✅ | Boolean, integer-width, decimal, date/time, GUID, and binary types are mapped back to CLR values. |
+| Result-set type metadata | ✅ | Boolean, integer-width, decimal, date/time, GUID, and binary types are mapped back to CLR values; `GetStream`/`GetTextReader` expose BLOB and text columns. |
 | File locking | ✅ | Writable opens create the Access lock file and release it on disposal. |
 
 ## Connection-string options

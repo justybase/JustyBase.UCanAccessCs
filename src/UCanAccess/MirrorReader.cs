@@ -222,6 +222,10 @@ public sealed class MirrorReader : DbDataReader
                 ?? string.Empty;
     }
 
+    public override Stream GetStream(int ordinal) => _inner.GetStream(ordinal);
+
+    public override TextReader GetTextReader(int ordinal) => _inner.GetTextReader(ordinal);
+
     public override object GetValue(int ordinal)
     {
         object raw = _inner.GetValue(ordinal);
