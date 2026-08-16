@@ -61,6 +61,47 @@ public class AccessSqlTranslatorTests
         Assert.Equal(expected, AccessSqlTranslator.Translate(input));
     }
 
+    [Theory]
+    [InlineData("SELECT DISTINCTROW TOP 5 [name] FROM [orders] WHERE order_date = #2003-11-22#")]
+    [InlineData("SELECT a & b FROM t")]
+    [InlineData("SELECT * FROM t WHERE a LIKE 'p*'")]
+    [InlineData("SELECT * FROM t WHERE id = @id")]
+    public void Ast_candidate_preserves_legacy_provider_output(string accessSql)
+    {
+        Assert.True(AccessSqlTranslator.IsAstCandidate(accessSql));
+
+        string expected = AccessSqlTranslator.TranslateLegacy(
+            accessSql, out int expectedCount, out IReadOnlyList<string>? expectedNames);
+        string actual = AccessSqlTranslator.Translate(
+            accessSql, out int actualCount, out IReadOnlyList<string>? actualNames);
+
+        Assert.Equal(expected, actual);
+        Assert.Equal(expectedCount, actualCount);
+        Assert.Equal(expectedNames, actualNames);
+    }
+
+    [Fact]
+    public void Ast_candidate_preserves_crosstab_provider_output()
+    {
+        const string accessSql =
+            "TRANSFORM Sum(amount) SELECT category FROM sales GROUP BY category PIVOT month IN ('Jan', 'Feb')";
+
+        Assert.True(AccessSqlTranslator.IsAstCandidate(accessSql));
+        Assert.Equal(
+            AccessSqlTranslator.TranslateLegacy(accessSql, out _, out _),
+            AccessSqlTranslator.Translate(accessSql));
+    }
+
+    [Theory]
+    [InlineData("PARAMETERS [p] Long; SELECT * FROM t WHERE id = [p]")]
+    [InlineData("SELECT TOP 10 PERCENT a FROM t")]
+    [InlineData("SELECT * FROM t WHERE a NOT LIKE 'p*'")]
+    [InlineData("SELECT * FROM a INNER JOIN b ON a.id = b.id")]
+    public void Unsupported_ast_shapes_keep_legacy_fallback(string accessSql)
+    {
+        Assert.False(AccessSqlTranslator.IsAstCandidate(accessSql));
+    }
+
     [Fact]
     public void Concatenation_with_ampersand_handles_nulls()
     {

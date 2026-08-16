@@ -11,7 +11,7 @@
          public surface incrementally. -->
     <NoWarn>$(NoWarn);1591;1573;0419</NoWarn>
     <Deterministic>true</Deterministic>
-    <Version>1.0.1</Version>
+    <Version>1.0.3</Version>
     <Authors>UCanAccess-csharp contributors</Authors>
     <Company>JustyBase</Company>
     <RepositoryType>git</RepositoryType>
@@ -23,6 +23,6 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Pure .NET reader/writer for Microsoft Access database files (.mdb/.accdb) - a port of Jackcess/UCanAccess.</Description>
     <!-- Version of the JustyBase.NetezzaSqlParser package (SQL lexer infrastructure). -->
-    <JustyBaseParserVersion Condition="'$(JustyBaseParserVersion)' == ''">0.8.0</JustyBaseParserVersion>
+    <JustyBaseParserVersion Condition="'$(JustyBaseParserVersion)' == ''">0.8.2</JustyBaseParserVersion>
   </PropertyGroup>
 </Project>

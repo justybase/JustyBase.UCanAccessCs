@@ -73,9 +73,44 @@ public static class AccessSqlTranslator
         Func<string, bool>? isExactDecimalColumn = null,
         Func<string, bool>? isDateColumn = null)
     {
+        if (AccessAstSqliteEmitter.TryTranslate(
+                accessSql,
+                out string astTranslated,
+                out parameterCount,
+                out namedParameters,
+                isMoneyColumn,
+                isExactDecimalColumn,
+                isDateColumn))
+        {
+            return astTranslated;
+        }
+
+        return TranslateLegacy(
+            accessSql,
+            out parameterCount,
+            out namedParameters,
+            isMoneyColumn,
+            isExactDecimalColumn,
+            isDateColumn);
+    }
+
+    internal static bool IsAstCandidate(string accessSql)
+        => AccessAstSqliteEmitter.IsCandidate(accessSql);
+
+    /// <summary>
+    /// Compatibility translator used both as the fallback and as the semantic
+    /// backend for the selective AST bridge. Keep provider-specific rewrites in
+    /// this method so the AST layer cannot accidentally become a second engine.
+    /// </summary>
+    internal static string TranslateLegacy(string accessSql, out int parameterCount,
+        out IReadOnlyList<string>? namedParameters,
+        Func<string, bool>? isMoneyColumn = null,
+        Func<string, bool>? isExactDecimalColumn = null,
+        Func<string, bool>? isDateColumn = null)
+    {
         if (CrosstabTranslator.TryTranslate(accessSql, isExactDecimalColumn, out string crosstabSql))
         {
-            return Translate(crosstabSql, out parameterCount, out namedParameters,
+            return TranslateLegacy(crosstabSql, out parameterCount, out namedParameters,
                 isMoneyColumn, isExactDecimalColumn, isDateColumn);
         }
 

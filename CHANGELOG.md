@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Prepare the provider package 1.0.3 for the published
+  `JustyBase.NetezzaSqlParser` 0.8.2 Access AST contract.
+
+- Aligned the provider with `JustyBase.NetezzaSqlParser` 0.8.2 and added
+  package-level Access parser contract tests plus a parity-tested AST
+  normalization bridge for a small SELECT/TOP/DISTINCTROW/crosstab subset. The
+  parser remains the shared lexer/syntax dependency; SQLite translation and
+  provider execution semantics remain local to UCanAccess.
 - Added Java-compatible Access function coverage for `Sign`, `CLong`, `CSign`,
   and `StrComp` binary/text comparison modes.
 - Added read/write support for existing Access `EXT_DATE_TIME` columns using

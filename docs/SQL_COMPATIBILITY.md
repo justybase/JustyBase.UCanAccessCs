@@ -1,5 +1,29 @@
 # SQL compatibility guide
 
+## Parser and provider boundary
+
+The provider consumes the Access lexer and syntax contract from
+`JustyBase.NetezzaSqlParser` 0.8.2. Parser support is used for shared lexical
+and authoring behavior; the provider's `AccessSqlTranslator`, DDL, DML and
+SQLite mirror remain responsible for execution semantics.
+
+These are intentionally separate capabilities. A statement may be accepted by
+the parser but rejected by the provider's compatibility baseline (for example
+`TOP ... PERCENT`), while provider-specific execution extensions must not be
+rejected solely because the editor AST does not model them yet. The architectural
+boundary is described in the
+[JustyBase.NetezzaSql architecture decision](https://github.com/justybase/JustyBase.NetezzaSql/blob/master/docs/architecture-access-provider-boundary.md).
+
+For a small whitelist of simple `SELECT` shapes, UCanAccess parses the shared
+AST and formats it back to canonical Access SQL before invoking the existing
+translator. This covers the shared contract for `TOP`, `DISTINCTROW`, date and
+identifier literals, inline parameters and explicit `TRANSFORM/PIVOT` queries.
+`PARAMETERS` wrappers, joins, subqueries, CTEs, set operations, windows and
+`TOP ... PERCENT` stay on the compatibility path (or are rejected by the
+provider where appropriate). Any AST parse or whitelist uncertainty also falls
+back to the legacy translator; the AST bridge does not become a second SQLite
+execution engine.
+
 ## Supported query families
 
 The mirror executes translated Access SQL for SELECT queries with filtering,
