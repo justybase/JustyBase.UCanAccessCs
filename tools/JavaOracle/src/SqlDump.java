@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -18,11 +19,16 @@ import java.util.TimeZone;
  * UCanAccess JDBC driver and dumps the result sets to canonical JSON.
  * Used as the behavioral oracle for the .NET port (UCanAccess-csharp).
  *
- * Usage: java -cp "ucanaccess.jar<path-separator>jackcess.jar<path-separator>hsqldb.jar<path-separator>." SqlDump <dbPath> <statementsFile> [outJson]
+ * Usage: java -cp "ucanaccess.jar<path-separator>jackcess.jar<path-separator>hsqldb.jar<path-separator>." SqlDump <dbPath> <statementsFile> [outJson] [paramsManifest]
  *
  * The statements file accepts semicolon-delimited SQL, including multiline
  * statements and semicolons inside strings/comments.  The historical format
  * with one SQL statement per line remains supported.
+ *
+ * The optional params manifest is a JSON array aligned with the statements:
+ * each entry is either null (no parameters) or an array of parameter values
+ * (number/string/boolean/null) bound positionally through PreparedStatement
+ * when the statement contains '?' placeholders.
  */
 public class SqlDump {
 
@@ -34,13 +40,21 @@ public class SqlDump {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("usage: SqlDump <dbPath> <statementsFile> [outJson]");
+            System.err.println("usage: SqlDump <dbPath> <statementsFile> [outJson] [paramsManifest]");
             System.exit(2);
         }
 
         File dbFile = new File(args[0]);
         String script = Files.readString(new File(args[1]).toPath(), StandardCharsets.UTF_8);
         java.util.List<String> statements = splitStatements(script);
+        java.util.List<java.util.List<Object>> manifest = args.length > 3
+            ? readParamsManifest(args[3])
+            : null;
+        if (manifest != null && manifest.size() != statements.size()) {
+            System.err.println("params manifest has " + manifest.size()
+                + " entries but the script has " + statements.size() + " statements");
+            System.exit(2);
+        }
 
         StringBuilder sb = new StringBuilder(1 << 20);
         sb.append("[\n");
@@ -49,8 +63,8 @@ public class SqlDump {
             + ";memory=true";
         try (Connection conn = DriverManager.getConnection(url)) {
             boolean first = true;
-            for (String sql : statements) {
-                String trimmed = stripLeadingComments(sql).trim();
+            for (int i = 0; i < statements.size(); i++) {
+                String trimmed = stripLeadingComments(statements.get(i)).trim();
                 if (trimmed.isEmpty()) {
                     continue;
                 }
@@ -58,7 +72,8 @@ public class SqlDump {
                     sb.append(",\n");
                 }
                 first = false;
-                dumpStatement(sb, conn, trimmed);
+                dumpStatement(sb, conn, trimmed,
+                    manifest == null ? null : manifest.get(i));
             }
         } finally {
             // ensure the HSQLDB mirror is shut down cleanly
@@ -78,61 +93,258 @@ public class SqlDump {
         }
     }
 
-    private static void dumpStatement(StringBuilder sb, Connection conn, String sql) {
+    private static void dumpStatement(StringBuilder sb, Connection conn, String sql,
+            java.util.List<Object> params) {
         sb.append("  {\"sql\": ").append(jstr(sql)).append(", ");
-        try (Statement st = conn.createStatement()) {
-            boolean hasResultSet = st.execute(sql);
-            if (!hasResultSet) {
-                sb.append("\"resultSet\": false, \"columnCount\": 0, ")
-                    .append("\"affectedRows\": ").append(st.getUpdateCount())
-                    .append(", \"rows\": []}");
+        try {
+            if (params != null && sql.indexOf('?') >= 0) {
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    bindParams(ps, params);
+                    if (!ps.execute()) {
+                        sb.append("\"resultSet\": false, \"columnCount\": 0, ")
+                            .append("\"affectedRows\": ").append(ps.getUpdateCount())
+                            .append(", \"rows\": []}");
+                        return;
+                    }
+                    try (ResultSet rs = ps.getResultSet()) {
+                        dumpRows(sb, rs);
+                    }
+                }
                 return;
             }
-            try (ResultSet rs = st.getResultSet()) {
-                ResultSetMetaData md = rs.getMetaData();
-                int colCount = md.getColumnCount();
-
-                sb.append("\"resultSet\": true, \"columnCount\": ").append(colCount)
-                    .append(", \"columns\": [");
-                for (int i = 1; i <= colCount; i++) {
-                    if (i > 1) {
-                        sb.append(", ");
-                    }
-                    sb.append(jstr(md.getColumnLabel(i)));
+            try (Statement st = conn.createStatement()) {
+                boolean hasResultSet = st.execute(sql);
+                if (!hasResultSet) {
+                    sb.append("\"resultSet\": false, \"columnCount\": 0, ")
+                        .append("\"affectedRows\": ").append(st.getUpdateCount())
+                        .append(", \"rows\": []}");
+                    return;
                 }
-                sb.append("], \"columnTypes\": [");
-                for (int i = 1; i <= colCount; i++) {
-                    if (i > 1) {
-                        sb.append(", ");
-                    }
-                    sb.append("{\"name\": ").append(jstr(md.getColumnLabel(i)))
-                        .append(", \"jdbcType\": ").append(md.getColumnType(i))
-                        .append(", \"typeName\": ").append(jstr(md.getColumnTypeName(i)))
-                        .append(", \"className\": ").append(jstr(md.getColumnClassName(i)))
-                        .append("}");
+                try (ResultSet rs = st.getResultSet()) {
+                    dumpRows(sb, rs);
                 }
-                sb.append("], \"rows\": [");
-
-                boolean firstRow = true;
-                while (rs.next()) {
-                    if (!firstRow) {
-                        sb.append(",");
-                    }
-                    firstRow = false;
-                    sb.append("\n    [");
-                    for (int i = 1; i <= colCount; i++) {
-                        if (i > 1) {
-                            sb.append(",");
-                        }
-                        appendValue(sb, rs.getObject(i));
-                    }
-                    sb.append("]");
-                }
-                sb.append("\n  ]}");
             }
         } catch (Exception ex) {
             sb.append("\"errorCategory\": ").append(jstr(errorCategory(ex)))
                 .append(", \"error\": ").append(jstr(String.valueOf(ex))).append("}");
+        }
+    }
+
+    private static void bindParams(PreparedStatement ps, java.util.List<Object> params)
+            throws SQLException {
+        for (int i = 0; i < params.size(); i++) {
+            Object v = params.get(i);
+            if (v == null) {
+                ps.setObject(i + 1, null);
+            } else if (v instanceof Long) {
+                ps.setLong(i + 1, (Long) v);
+            } else if (v instanceof Double) {
+                ps.setDouble(i + 1, (Double) v);
+            } else if (v instanceof Boolean) {
+                ps.setBoolean(i + 1, (Boolean) v);
+            } else {
+                ps.setString(i + 1, String.valueOf(v));
+            }
+        }
+    }
+
+    private static void dumpRows(StringBuilder sb, ResultSet rs) throws Exception {
+        ResultSetMetaData md = rs.getMetaData();
+        int colCount = md.getColumnCount();
+
+        sb.append("\"resultSet\": true, \"columnCount\": ").append(colCount)
+            .append(", \"columns\": [");
+        for (int i = 1; i <= colCount; i++) {
+            if (i > 1) {
+                sb.append(", ");
+            }
+            sb.append(jstr(md.getColumnLabel(i)));
+        }
+        sb.append("], \"columnTypes\": [");
+        for (int i = 1; i <= colCount; i++) {
+            if (i > 1) {
+                sb.append(", ");
+            }
+            sb.append("{\"name\": ").append(jstr(md.getColumnLabel(i)))
+                .append(", \"jdbcType\": ").append(md.getColumnType(i))
+                .append(", \"typeName\": ").append(jstr(md.getColumnTypeName(i)))
+                .append(", \"className\": ").append(jstr(md.getColumnClassName(i)))
+                .append("}");
+        }
+        sb.append("], \"rows\": [");
+
+        boolean firstRow = true;
+        while (rs.next()) {
+            if (!firstRow) {
+                sb.append(",");
+            }
+            firstRow = false;
+            sb.append("\n    [");
+            for (int i = 1; i <= colCount; i++) {
+                if (i > 1) {
+                    sb.append(",");
+                }
+                appendValue(sb, rs.getObject(i));
+            }
+            sb.append("]");
+        }
+        sb.append("\n  ]}");
+    }
+
+    /**
+     * Reads the params manifest: a JSON array aligned with the statements, where
+     * each entry is null or an array of number/string/boolean/null values.
+     * A dependency-free parser is used on purpose (no extra jars on the oracle
+     * classpath beyond Jackcess/UCanAccess/HSQLDB).
+     */
+    private static java.util.List<java.util.List<Object>> readParamsManifest(String path)
+            throws Exception {
+        String text = Files.readString(new File(path).toPath(), StandardCharsets.UTF_8);
+        MiniJson json = new MiniJson(text);
+        Object top = json.parseValue();
+        if (!(top instanceof java.util.List)) {
+            throw new IllegalArgumentException("params manifest must be a JSON array");
+        }
+        java.util.List<?> entries = (java.util.List<?>) top;
+        java.util.List<java.util.List<Object>> manifest = new java.util.ArrayList<>(entries.size());
+        for (Object entry : entries) {
+            if (entry == null) {
+                manifest.add(null);
+            } else if (entry instanceof java.util.List) {
+                manifest.add((java.util.List<Object>) entry);
+            } else {
+                throw new IllegalArgumentException("params manifest entries must be null or arrays");
+            }
+        }
+        return manifest;
+    }
+
+    private static final class MiniJson {
+        private final String s;
+        private int p;
+
+        MiniJson(String s) {
+            this.s = s;
+        }
+
+        void ws() {
+            while (p < s.length() && Character.isWhitespace(s.charAt(p))) {
+                p++;
+            }
+        }
+
+        Object parseValue() {
+            ws();
+            if (p >= s.length()) {
+                throw new IllegalArgumentException("unexpected end of params manifest");
+            }
+            char c = s.charAt(p);
+            if (c == '[') {
+                return parseArray();
+            }
+            if (c == '"') {
+                return parseString();
+            }
+            if (c == 'n') {
+                expect("null");
+                return null;
+            }
+            if (c == 't') {
+                expect("true");
+                return Boolean.TRUE;
+            }
+            if (c == 'f') {
+                expect("false");
+                return Boolean.FALSE;
+            }
+            return parseNumber();
+        }
+
+        java.util.List<Object> parseArray() {
+            p++; // [
+            java.util.List<Object> out = new java.util.ArrayList<>();
+            ws();
+            if (p < s.length() && s.charAt(p) == ']') {
+                p++;
+                return out;
+            }
+            while (true) {
+                out.add(parseValue());
+                ws();
+                if (p >= s.length()) {
+                    throw new IllegalArgumentException("unterminated array in params manifest");
+                }
+                char c = s.charAt(p++);
+                if (c == ']') {
+                    return out;
+                }
+                if (c != ',') {
+                    throw new IllegalArgumentException("expected ',' or ']' in params manifest");
+                }
+            }
+        }
+
+        String parseString() {
+            p++; // "
+            StringBuilder sb = new StringBuilder();
+            while (true) {
+                if (p >= s.length()) {
+                    throw new IllegalArgumentException("unterminated string in params manifest");
+                }
+                char c = s.charAt(p++);
+                if (c == '"') {
+                    return sb.toString();
+                }
+                if (c == '\\') {
+                    if (p >= s.length()) {
+                        throw new IllegalArgumentException("bad escape in params manifest");
+                    }
+                    char e = s.charAt(p++);
+                    switch (e) {
+                        case '"': sb.append('"'); break;
+                        case '\\': sb.append('\\'); break;
+                        case '/': sb.append('/'); break;
+                        case 'b': sb.append('\b'); break;
+                        case 'f': sb.append('\f'); break;
+                        case 'n': sb.append('\n'); break;
+                        case 'r': sb.append('\r'); break;
+                        case 't': sb.append('\t'); break;
+                        case 'u':
+                            sb.append((char) Integer.parseInt(s.substring(p, p + 4), 16));
+                            p += 4;
+                            break;
+                        default: throw new IllegalArgumentException("bad escape in params manifest");
+                    }
+                } else {
+                    sb.append(c);
+                }
+            }
+        }
+
+        void expect(String literal) {
+            if (!s.startsWith(literal, p)) {
+                throw new IllegalArgumentException("bad literal in params manifest");
+            }
+            p += literal.length();
+        }
+
+        Object parseNumber() {
+            int start = p;
+            while (p < s.length() && "-+0123456789.eE".indexOf(s.charAt(p)) >= 0) {
+                p++;
+            }
+            String raw = s.substring(start, p);
+            if (raw.isEmpty()) {
+                throw new IllegalArgumentException("bad number in params manifest");
+            }
+            if (raw.indexOf('.') < 0 && raw.indexOf('e') < 0 && raw.indexOf('E') < 0) {
+                try {
+                    return Long.valueOf(raw);
+                } catch (NumberFormatException ex) {
+                    // fall through to double
+                }
+            }
+            return Double.valueOf(raw);
         }
     }
 

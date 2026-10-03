@@ -37,6 +37,11 @@ public class SqlParityTests
         Assert.True(System.IO.File.Exists(jsonPath), $"missing {jsonPath}; regenerate with tools/JavaOracle/run.ps1");
 
         string[] statements = SplitStatements(System.IO.File.ReadAllText(sqlPath)).ToArray();
+        List<List<object?>?>? manifest = ReadParamsManifest(Path.Combine(FixtureDir, corpus + ".params.json"));
+        if (manifest != null)
+        {
+            Assert.Equal(statements.Length, manifest.Count);
+        }
 
         string fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", corpus + ".mdb");
         if (!System.IO.File.Exists(fixture))
@@ -58,7 +63,8 @@ public class SqlParityTests
             var oracle = oracleStatements[s];
 
             StatementResult expected = ReadOracleResult(oracle);
-            StatementResult actual = ExecuteStatement(conn, sql);
+            StatementResult actual = ExecuteStatement(conn, sql,
+                manifest == null ? null : manifest[s]);
 
             if (KnownDeviations.TryGetValue(sql, out string? deviation))
             {
@@ -230,7 +236,41 @@ public class SqlParityTests
         return expectedNumeric && actualNumeric;
     }
 
-    private static StatementResult ExecuteStatement(DbConnection conn, string sql)
+    private static List<List<object?>?>? ReadParamsManifest(string path)
+    {
+        if (!System.IO.File.Exists(path))
+        {
+            return null;
+        }
+        using var doc = JsonDocument.Parse(System.IO.File.ReadAllText(path));
+        var manifest = new List<List<object?>?>();
+        foreach (JsonElement entry in doc.RootElement.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.Null)
+            {
+                manifest.Add(null);
+                continue;
+            }
+            var values = new List<object?>();
+            foreach (JsonElement value in entry.EnumerateArray())
+            {
+                values.Add(value.ValueKind switch
+                {
+                    JsonValueKind.Null => null,
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Number when value.TryGetInt64(out long integer) => integer,
+                    JsonValueKind.Number => value.GetDouble(),
+                    JsonValueKind.String => value.GetString(),
+                    _ => value.GetRawText(),
+                });
+            }
+            manifest.Add(values);
+        }
+        return manifest;
+    }
+
+    private static StatementResult ExecuteStatement(DbConnection conn, string sql, List<object?>? parameters = null)
     {
         var rows = new List<List<object?>>();
         try
@@ -240,12 +280,14 @@ public class SqlParityTests
             {
                 using var command = conn.CreateCommand();
                 command.CommandText = sql;
+                BindParameters(command, parameters);
                 return new StatementResult(false, command.ExecuteNonQuery(),
                     new List<ColumnResult>(), rows, null);
             }
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
+            BindParameters(cmd, parameters);
             using var reader = cmd.ExecuteReader();
             var columns = Enumerable.Range(0, reader.FieldCount)
                 .Select(i => new ColumnResult(reader.GetName(i),
@@ -279,6 +321,20 @@ public class SqlParityTests
         {
             return new StatementResult(false, 0, new List<ColumnResult>(), rows,
                 NormalizeExceptionCategory(ex));
+        }
+    }
+
+    private static void BindParameters(DbCommand command, List<object?>? parameters)
+    {
+        if (parameters == null)
+        {
+            return;
+        }
+        foreach (object? value in parameters)
+        {
+            var parameter = command.CreateParameter();
+            parameter.Value = value ?? DBNull.Value;
+            command.Parameters.Add(parameter);
         }
     }
 

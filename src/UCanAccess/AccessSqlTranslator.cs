@@ -213,11 +213,13 @@ public static class AccessSqlTranslator
                 // Upstream concatNulls=false (default since 3.0): NULL maps to ''.
                 // concatNulls=true restores the pre-3.0 NULL-propagating behavior.
                 // Skip past the inserted fragment: it contains '||' which must
-                // not be reprocessed as a concat operator.
+                // not be reprocessed as a concat operator. Placeholders inside
+                // the fragment still need numbering (the main loop skips them).
                 string replacement = concatNulls
                     ? $"({left} || {right})"
                     : $"(ifnull({left}, '') || ifnull({right}, ''))";
                 int inserted = ReplaceTokens(work, leftStart, rightEnd, replacement);
+                pCount = NumberPlaceholders(work, leftStart, leftStart + inserted, pCount);
 
                 i = leftStart + inserted - 1;
             }
@@ -233,6 +235,7 @@ public static class AccessSqlTranslator
                     ? $"({left} || {right})"
                     : $"(ifnull({left}, '') || ifnull({right}, ''))";
                 int inserted = ReplaceTokens(work, leftStart, rightEnd, replacement);
+                pCount = NumberPlaceholders(work, leftStart, leftStart + inserted, pCount);
 
                 i = leftStart + inserted - 1;
             }
@@ -825,6 +828,22 @@ public static class AccessSqlTranslator
     {
         // no space before/after parens or around dots
         return prev.Text is "(" or "." || cur.Text is ")" or "," or "(" or ".";
+    }
+
+    /// <summary>
+    /// Numbers bare '?' placeholders inside an inserted fragment (which the main
+    /// rewrite loop skips) and returns the updated placeholder count.
+    /// </summary>
+    private static int NumberPlaceholders(List<Token> work, int start, int endExclusive, int pCount)
+    {
+        for (int j = start; j < endExclusive && j < work.Count; j++)
+        {
+            if (work[j].Text == "?")
+            {
+                work[j] = new Token(Kind.Word, $"@p{pCount++}");
+            }
+        }
+        return pCount;
     }
 
     private static int ReplaceTokens(List<Token> work, int start, int endExclusive, string sqlFragment)

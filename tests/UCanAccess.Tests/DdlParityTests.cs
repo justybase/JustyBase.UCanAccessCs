@@ -234,10 +234,62 @@ public class DdlParityTests
     }
 
     [Fact]
+    public void Update_delete_sequence_produces_same_file_state_as_java()
+    {
+        if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.7.jar") == null
+            || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
+        {
+            _output.WriteLine("SKIPPED: java/jars/classes not available");
+            throw Xunit.Sdk.SkipException.ForSkip("java/jars/classes not available");
+        }
+
+        string[] statements =
+        {
+            "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 42, 9.99, #5/5/2024#, 'parity insert', 'p01')",
+            "UPDATE t_detail SET qty = qty + 1, note = note & '!' WHERE qty = 42",
+            "UPDATE t_detail SET price = 19.99 WHERE master_id IN (SELECT id FROM t_master WHERE cat = 'A')",
+            "DELETE FROM t_detail WHERE qty = 5",
+            "DELETE * FROM t_detail WHERE note = 'FIRST ITEM'",
+        };
+
+        string scriptPath = Path.Combine(Path.GetTempPath(), $"ucanaccess_ddlp_{Guid.NewGuid():N}.sql");
+        System.IO.File.WriteAllLines(scriptPath, statements);
+
+        string portCopy = TempCopy(Fixture("sqljoin.mdb"));
+        string javaCopy = TempCopy(Fixture("sqljoin.mdb"));
+        try
+        {
+            ApplyViaPort(portCopy, statements);
+
+            string jackJar = FindJar("jackcess-5.1.5.jar")!;
+            string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.7.jar")!;
+            string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
+            RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
+
+            string portJson = RunDbDump(jackJar, classesDir, portCopy);
+            string javaJson = RunDbDump(jackJar, classesDir, javaCopy);
+
+            var portRows = ExtractRows(portJson, "t_detail");
+            var javaRows = ExtractRows(javaJson, "t_detail");
+            Assert.Equal(javaRows.Count, portRows.Count);
+            Assert.Equal(javaRows, portRows);
+            Assert.Contains("\"parity insert!\"", portJson);
+        }
+        finally
+        {
+            System.IO.File.Delete(portCopy);
+            System.IO.File.Delete(javaCopy);
+            System.IO.File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
     public void Disable_enable_autoincrement_produces_same_file_state_as_java()
     {
         if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
-            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.6.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.7.jar") == null
             || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
         {
             _output.WriteLine("SKIPPED: java/jars/classes not available");

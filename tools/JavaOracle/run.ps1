@@ -62,8 +62,13 @@ if (Test-Path $sqlDir) {
         }
         if (Test-Path $mdb) {
             $out = Join-Path $sqlDir "$corpus.java.json"
+            $manifest = Join-Path $sqlDir "$corpus.params.json"
             Write-Host "SqlDump: $corpus"
-            & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" -cp $sqlCp SqlDump $mdb $_.FullName $out
+            if (Test-Path $manifest) {
+                & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" -cp $sqlCp SqlDump $mdb $_.FullName $out $manifest
+            } else {
+                & $javaCommand "-Duser.timezone=UTC" "-Duser.language=en" "-Duser.country=US" -cp $sqlCp SqlDump $mdb $_.FullName $out
+            }
             if ($LASTEXITCODE -ne 0) { throw "sqldump failed for $corpus" }
         }
     }

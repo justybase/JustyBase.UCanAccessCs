@@ -198,6 +198,17 @@ public class AccessSqlTranslatorTests
     }
 
     [Fact]
+    public void Placeholders_inside_concat_operands_are_numbered_in_order()
+    {
+        string sql = AccessSqlTranslator.Translate(
+            "SELECT name & ? AS ex FROM t WHERE id = ?", out int parameterCount, out _);
+        Assert.Equal(2, parameterCount);
+        Assert.Contains("@p0", sql, StringComparison.Ordinal);
+        Assert.Contains("@p1", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("?", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Top_percent_is_rejected_by_the_5_1_7_compatibility_baseline()
     {
         var exception = Assert.Throws<NotSupportedException>(() =>

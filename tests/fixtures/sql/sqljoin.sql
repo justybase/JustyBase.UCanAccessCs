@@ -86,3 +86,15 @@ SELECT id FROM t_master WHERE name BETWEEN 'ALPHA' AND 'DELTA' ORDER BY id
 SELECT t_detail.* FROM t_detail WHERE qty > 3 ORDER BY id
 SELECT d.*, m.name FROM t_detail d INNER JOIN t_master m ON d.master_id = m.id ORDER BY d.id
 SELECT [t_detail].* FROM [t_detail] WHERE qty > 3 ORDER BY id
+SELECT id, name FROM t_master WHERE id = ? ORDER BY id
+SELECT id, name FROM t_master WHERE cat = ? ORDER BY id
+SELECT id, qty FROM t_detail WHERE qty > ? AND qty < ? ORDER BY id
+SELECT id, name FROM t_master WHERE name LIKE ? ORDER BY id
+SELECT id, note FROM t_detail WHERE note = ? ORDER BY id
+SELECT id FROM t_detail WHERE code IN (?, ?) ORDER BY id
+SELECT id FROM t_detail WHERE qty BETWEEN ? AND ? ORDER BY id
+SELECT id, name & ? AS ex FROM t_master WHERE id = ?
+SELECT count(*) FROM t_detail WHERE master_id = ?
+SELECT id FROM t_master WHERE active = ? ORDER BY id
+SELECT m.id, d.qty FROM t_master m INNER JOIN t_detail d ON m.id = d.master_id WHERE d.qty = ? ORDER BY d.id
+SELECT id FROM t_detail WHERE price > ? ORDER BY id
