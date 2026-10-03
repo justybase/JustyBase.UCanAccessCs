@@ -445,10 +445,12 @@ public sealed class PageChannel : IDisposable
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(rentedEncoded);
+            // Clear: pooled buffers may hold decrypted page plaintext that
+            // must not leak to other pool renters in the process.
+            ArrayPool<byte>.Shared.Return(rentedEncoded, clearArray: true);
             if (rentedLogical != null)
             {
-                ArrayPool<byte>.Shared.Return(rentedLogical);
+                ArrayPool<byte>.Shared.Return(rentedLogical, clearArray: true);
             }
         }
     }

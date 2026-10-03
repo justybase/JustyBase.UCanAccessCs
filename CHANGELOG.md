@@ -65,6 +65,8 @@
 - Added upstream `Ignore Case` (default true, binary when false) and
   `Concat Nulls` (default false maps NULL to '', true propagates NULL for
   `&`/`||`) with translator/mirror/`LIKE` support and `TextSemanticsTests`.
+  Note: previously `||` passed NULL through (SQLite semantics); it now follows
+  the same `ConcatNulls` contract as `&`, matching Java UCanAccess.
 - Added upstream complex-type filters `Equals`, `EqualsIgnoreOrder` and
   `Contains` over the JSON mirror with complex-array parameter support and
   `ComplexTypeProviderTests` coverage.

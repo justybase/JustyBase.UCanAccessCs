@@ -1243,14 +1243,17 @@ public static partial class AccessFunctions
         // Mirror JSON, CLR arrays (parameters that bypassed the codec), or single values.
         object? normalized = value switch
         {
-            string json when IsComplexJson(json) => ComplexValueJson.Deserialize(json),
+            string json when TryDeserializeComplex(json) is object?[] complex => complex,
+            string json when IsComplexJson(json) => new[] { json },
             UCanAccess.File.AccessSingleValue[] single => single,
             UCanAccess.File.AccessAttachment[] attachments => attachments,
             UCanAccess.File.AccessVersion[] versions => versions,
             UCanAccess.File.AccessSingleValue single => new[] { single },
             UCanAccess.File.AccessAttachment attachment => new[] { attachment },
             UCanAccess.File.AccessVersion version => new[] { version },
-            System.Collections.IEnumerable enumerable and not string => enumerable.Cast<object?>().ToArray(),
+            // byte[] is a blob scalar, not a per-byte entry list.
+            System.Collections.IEnumerable enumerable and not string and not byte[]
+                => enumerable.Cast<object?>().ToArray(),
             _ => new[] { value },
         };
         return normalized switch
@@ -1265,8 +1268,31 @@ public static partial class AccessFunctions
 
     private static bool IsComplexJson(string text)
     {
-        text = text.TrimStart();
-        return text.StartsWith("{", StringComparison.Ordinal) && text.Contains("Values", StringComparison.OrdinalIgnoreCase);
+        // Strict envelope shape (quoted "Values" key inside braces), not a
+        // substring guess: plain text like "{Values are important}" must not
+        // be sent to the JSON deserializer.
+        text = text.Trim();
+        return text.StartsWith("{", StringComparison.Ordinal)
+            && text.EndsWith("}", StringComparison.Ordinal)
+            && text.Contains("\"Values\"", StringComparison.Ordinal);
+    }
+
+    private static object?[]? TryDeserializeComplex(string text)
+    {
+        if (!IsComplexJson(text))
+        {
+            return null;
+        }
+        try
+        {
+            return ComplexValueJson.Deserialize(text) as object?[];
+        }
+        catch (Exception)
+        {
+            // Malformed envelope: fall back to scalar string comparison
+            // instead of failing the SQL function.
+            return null;
+        }
     }
 
     private static string CanonicalSingle(UCanAccess.File.AccessSingleValue value)

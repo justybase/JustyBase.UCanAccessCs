@@ -56,6 +56,13 @@ internal static class AccessValueCodec
         {
             null or DBNull => DBNull.Value,
             AccessSingleValue[] or AccessAttachment[] or AccessVersion[] => ComplexValueJson.Serialize(value),
+            // Single complex values and generic collections (e.g. List<AccessSingleValue>)
+            // normalize to the same JSON envelope as the array forms.
+            AccessSingleValue single => ComplexValueJson.Serialize(new[] { single }),
+            AccessAttachment attachment => ComplexValueJson.Serialize(new[] { attachment }),
+            AccessVersion version => ComplexValueJson.Serialize(new[] { version }),
+            System.Collections.IEnumerable enumerable and not string and not byte[]
+                when SerializeComplexEnumerable(enumerable) is string json => json,
             decimal number => ExactDecimal.FromDecimal(number).ToString(),
             float number => number.ToString("R", CultureInfo.InvariantCulture),
             double number => number.ToString("R", CultureInfo.InvariantCulture),
@@ -64,6 +71,46 @@ internal static class AccessValueCodec
             Guid guid => guid.ToString("D"),
             _ => value,
         };
+
+    private static string? SerializeComplexEnumerable(System.Collections.IEnumerable enumerable)
+    {
+        List<AccessSingleValue>? singles = null;
+        List<AccessAttachment>? attachments = null;
+        List<AccessVersion>? versions = null;
+        foreach (object? item in enumerable)
+        {
+            switch (item)
+            {
+                case AccessSingleValue single when attachments == null && versions == null:
+                    singles ??= new List<AccessSingleValue>();
+                    singles.Add(single);
+                    break;
+                case AccessAttachment attachment when singles == null && versions == null:
+                    attachments ??= new List<AccessAttachment>();
+                    attachments.Add(attachment);
+                    break;
+                case AccessVersion version when singles == null && attachments == null:
+                    versions ??= new List<AccessVersion>();
+                    versions.Add(version);
+                    break;
+                default:
+                    return null;
+            }
+        }
+        if (singles != null)
+        {
+            return ComplexValueJson.Serialize(singles.ToArray());
+        }
+        if (attachments != null)
+        {
+            return ComplexValueJson.Serialize(attachments.ToArray());
+        }
+        if (versions != null)
+        {
+            return ComplexValueJson.Serialize(versions.ToArray());
+        }
+        return null;
+    }
 
     public static object? CoerceForColumn(Column column, object? value)
     {
