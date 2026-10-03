@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace UCanAccess.File;
 
 /// <summary>
@@ -401,10 +403,13 @@ public sealed class PageChannel : IDisposable
 
         // Encryption is page-based.  Merge a partial logical update with the
         // current page before encoding so no CBC block is written in isolation.
+        // Pooled buffers: encrypted writes allocate two pages per call otherwise.
+        byte[]? rentedLogical = null;
         byte[] logical = page;
         if (pageOffset != 0)
         {
-            logical = new byte[_format.PageSize];
+            rentedLogical = ArrayPool<byte>.Shared.Rent(_format.PageSize);
+            logical = rentedLogical;
             if (pageNumber == 0)
             {
                 ReadRootPage(logical);
@@ -416,24 +421,36 @@ public sealed class PageChannel : IDisposable
             Array.Copy(page, pageOffset, logical, pageOffset, _format.PageSize - pageOffset);
         }
 
-        byte[] encoded = new byte[_format.PageSize];
-        if (pageNumber == 0)
+        byte[] rentedEncoded = ArrayPool<byte>.Shared.Rent(_format.PageSize);
+        try
         {
-            ApplyHeaderMask(logical);
-            try
+            Span<byte> encoded = rentedEncoded.AsSpan(0, _format.PageSize);
+            if (pageNumber == 0)
+            {
+                ApplyHeaderMask(logical);
+                try
+                {
+                    _codec.EncodePage(pageNumber, logical, encoded);
+                }
+                finally
+                {
+                    ApplyHeaderMask(logical);
+                }
+            }
+            else
             {
                 _codec.EncodePage(pageNumber, logical, encoded);
             }
-            finally
+            WriteAt(rentedEncoded, 0, _format.PageSize, GetPageOffset(pageNumber));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rentedEncoded);
+            if (rentedLogical != null)
             {
-                ApplyHeaderMask(logical);
+                ArrayPool<byte>.Shared.Return(rentedLogical);
             }
         }
-        else
-        {
-            _codec.EncodePage(pageNumber, logical, encoded);
-        }
-        WriteAt(encoded, 0, _format.PageSize, GetPageOffset(pageNumber));
     }
 
     private void ValidateBuffer(byte[] buffer)

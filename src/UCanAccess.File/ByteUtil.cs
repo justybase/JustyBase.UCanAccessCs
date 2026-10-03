@@ -51,12 +51,10 @@ internal static class ByteUtil
 
     public static string ToHexString(ReadOnlySpan<byte> buffer, int offset, int length, bool lowercase)
     {
-        var sb = new StringBuilder(length * 2);
-        for (int i = 0; i < length; i++)
-        {
-            sb.Append(buffer[offset + i].ToString(lowercase ? "x2" : "X2"));
-        }
-        return sb.ToString();
+        // Convert.ToHexString emits uppercase; lowercase via a single pass
+        // instead of N per-byte ToString("x2") allocations.
+        string hex = Convert.ToHexString(buffer.Slice(offset, length));
+        return lowercase ? hex.ToLowerInvariant() : hex;
     }
 
     /// <summary>
@@ -112,6 +110,13 @@ internal static class ByteUtil
         buffer[offset + 2] = (byte)value;
     }
 
+    public static void Put3ByteIntBigEndian(Span<byte> buffer, int value)
+    {
+        buffer[0] = (byte)(value >> 16);
+        buffer[1] = (byte)(value >> 8);
+        buffer[2] = (byte)value;
+    }
+
     public static void PutIntBigEndian(byte[] buffer, int offset, int value)
         => BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), value);
 }
@@ -163,6 +168,13 @@ public class ByteStream
         EnsureNewCapacity(length);
         Array.Copy(b, offset, _bytes, _length, length);
         _length += length;
+    }
+
+    public void Write(ReadOnlySpan<byte> data)
+    {
+        EnsureNewCapacity(data.Length);
+        data.CopyTo(_bytes.AsSpan(_length));
+        _length += data.Length;
     }
 
     public byte Get(int offset) => _bytes[offset];

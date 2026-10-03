@@ -257,13 +257,14 @@ public sealed class Column
         }
         bool negate = data[offset] != 0;
 
-        byte[] tmp = new byte[16];
-        Array.Copy(data, offset + 1, tmp, 0, 16);
+        Span<byte> tmp = stackalloc byte[16];
+        data.AsSpan(offset + 1, 16).CopyTo(tmp);
 
         // fix endianness of each 4 byte segment (little-endian ints -> big-endian)
-        for (int i = 0; i < tmp.Length; i += 4)
+        for (int i = 0; i < 16; i += 4)
         {
-            ByteUtil.Swap4Bytes(tmp, i);
+            (tmp[i], tmp[i + 3]) = (tmp[i + 3], tmp[i]);
+            (tmp[i + 1], tmp[i + 2]) = (tmp[i + 2], tmp[i + 1]);
         }
 
         // the magnitude is unsigned big-endian
@@ -283,7 +284,29 @@ public sealed class Column
         return result;
     }
 
+    private static readonly decimal[] Pow10Decimals = InitPow10Decimals();
+
+    private static decimal[] InitPow10Decimals()
+    {
+        // 10^28 overflows decimal, so the table stops at 10^27; larger
+        // exponents fall back to the slow path (and overflow exactly as before).
+        var table = new decimal[28];
+        decimal value = 1m;
+        for (int i = 0; i < table.Length; i++)
+        {
+            table[i] = value;
+            if (i + 1 < table.Length)
+            {
+                value *= 10m;
+            }
+        }
+        return table;
+    }
+
     private static decimal Pow10Decimal(int exponent)
+        => (uint)exponent < (uint)Pow10Decimals.Length ? Pow10Decimals[exponent] : SlowPow10Decimal(exponent);
+
+    private static decimal SlowPow10Decimal(int exponent)
     {
         decimal value = 1m;
         decimal factor = 10m;
@@ -907,24 +930,30 @@ public sealed class Column
         {
             throw new DatabaseException("GUID value is shorter than 16 bytes.");
         }
-        byte[] tmp = data.ToArray();
-        ByteUtil.Swap4Bytes(tmp, 0);
-        ByteUtil.Swap2Bytes(tmp, 4);
-        ByteUtil.Swap2Bytes(tmp, 6);
+        // Mixed-endian GUID fields: swap in place on the stack, then format
+        // once via string.Create (2 allocations total instead of ~17).
+        Span<byte> tmp = stackalloc byte[16];
+        data[..16].CopyTo(tmp);
+        (tmp[0], tmp[3]) = (tmp[3], tmp[0]);
+        (tmp[1], tmp[2]) = (tmp[2], tmp[1]);
+        (tmp[4], tmp[5]) = (tmp[5], tmp[4]);
+        (tmp[6], tmp[7]) = (tmp[7], tmp[6]);
 
-        var sb = new StringBuilder(22);
-        sb.Append('{');
-        sb.Append(ByteUtil.ToHexString(tmp, 0, 4, false));
-        sb.Append('-');
-        sb.Append(ByteUtil.ToHexString(tmp, 4, 2, false));
-        sb.Append('-');
-        sb.Append(ByteUtil.ToHexString(tmp, 6, 2, false));
-        sb.Append('-');
-        sb.Append(ByteUtil.ToHexString(tmp, 8, 2, false));
-        sb.Append('-');
-        sb.Append(ByteUtil.ToHexString(tmp, 10, 6, false));
-        sb.Append('}');
-        return sb.ToString();
+        string hex = Convert.ToHexString(tmp);
+        return string.Create(38, hex, static (span, h) =>
+        {
+            span[0] = '{';
+            h.AsSpan(0, 8).CopyTo(span[1..]);
+            span[9] = '-';
+            h.AsSpan(8, 4).CopyTo(span[10..]);
+            span[14] = '-';
+            h.AsSpan(12, 4).CopyTo(span[15..]);
+            span[19] = '-';
+            h.AsSpan(16, 4).CopyTo(span[20..]);
+            span[24] = '-';
+            h.AsSpan(20, 12).CopyTo(span[25..]);
+            span[37] = '}';
+        });
     }
 
     /// <summary>

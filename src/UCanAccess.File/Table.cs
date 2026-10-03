@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 namespace UCanAccess.File;
@@ -32,6 +33,15 @@ public sealed class Table
     private readonly List<IndexImpl> _indexes = new();
     private readonly Dictionary<int, ComplexColumnInfo> _complexColumns = new();
     private bool _complexColumnsLoaded;
+    /// <summary>
+    /// Child rows of complex flat tables grouped by foreign key
+    /// (column index to key to rows). Built on demand per read; cleared by any
+    /// complex write through this table so readers never see stale children.
+    /// Flat tables are owned by their parent complex column, so all mutations
+    /// flow through <see cref="WriteComplexChildren"/> and
+    /// <see cref="DeleteComplexChildren"/>.
+    /// </summary>
+    private readonly Dictionary<int, Dictionary<int, List<Row>>> _complexChildLookup = new();
     /// <summary>offset within the table-definition buffer where the index definitions start</summary>
     private int _indexBlockStart;
     /// <summary>the live first page of the table definition (shared with the usage maps)</summary>
@@ -1659,27 +1669,37 @@ public sealed class Table
     public IEnumerable<RowLocation> RowLocations()
     {
         var ownedPages = _ownedPages.Cursor();
-        while (true)
+        // Pooled page buffer: RowLocations is the hottest scan path (mirror
+        // loads, DML, dumps). Rent once per enumeration instead of allocating
+        // a PageSize array per data page.
+        byte[] page = ArrayPool<byte>.Shared.Rent(Format.PageSize);
+        try
         {
-            int pageNumber = ownedPages.GetNextPage();
-            if (pageNumber == PageChannelImpl.InvalidPageNumber)
+            while (true)
             {
-                yield break;
-            }
-
-            byte[] page = new byte[Format.PageSize];
-            _database.PageChannel.ReadPage(page, pageNumber);
-            int rowsOnPage = GetRowsOnDataPage(page, Format);
-            for (int rowNumber = 0; rowNumber < rowsOnPage; rowNumber++)
-            {
-                var positioned = PositionAtRowData(pageNumber, rowNumber, page);
-                if (positioned == null)
+                int pageNumber = ownedPages.GetNextPage();
+                if (pageNumber == PageChannelImpl.InvalidPageNumber)
                 {
-                    continue;
+                    yield break;
                 }
-                yield return new RowLocation(pageNumber, rowNumber,
-                    ReadRow(positioned.Value.page, positioned.Value.rowStart, positioned.Value.rowEnd));
+
+                _database.PageChannel.ReadPage(page, pageNumber);
+                int rowsOnPage = GetRowsOnDataPage(page, Format);
+                for (int rowNumber = 0; rowNumber < rowsOnPage; rowNumber++)
+                {
+                    var positioned = PositionAtRowData(pageNumber, rowNumber, page);
+                    if (positioned == null)
+                    {
+                        continue;
+                    }
+                    yield return new RowLocation(pageNumber, rowNumber,
+                        ReadRow(positioned.Value.page, positioned.Value.rowStart, positioned.Value.rowEnd));
+                }
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(page);
         }
     }
 
@@ -1692,32 +1712,39 @@ public sealed class Table
 
         var references = new Dictionary<int, int>();
         var ownedPages = _ownedPages.Cursor();
-        while (true)
+        byte[] page = ArrayPool<byte>.Shared.Rent(Format.PageSize);
+        try
         {
-            int pageNumber = ownedPages.GetNextPage();
-            if (pageNumber == PageChannelImpl.InvalidPageNumber)
+            while (true)
             {
-                break;
-            }
-
-            byte[] page = new byte[Format.PageSize];
-            _database.PageChannel.ReadPage(page, pageNumber);
-            int rowsOnPage = GetRowsOnDataPage(page, Format);
-            for (int rowNumber = 0; rowNumber < rowsOnPage; rowNumber++)
-            {
-                    var positioned = PositionAtRowData(pageNumber, rowNumber, page);
-                if (positioned != null)
+                int pageNumber = ownedPages.GetNextPage();
+                if (pageNumber == PageChannelImpl.InvalidPageNumber)
                 {
-                    var rowPages = new HashSet<int>();
-                    CollectRowLongValuePages(positioned.Value.page, positioned.Value.rowStart,
-                        positioned.Value.rowEnd, rowPages);
-                    foreach (int rowPage in rowPages)
+                    break;
+                }
+
+                _database.PageChannel.ReadPage(page, pageNumber);
+                int rowsOnPage = GetRowsOnDataPage(page, Format);
+                for (int rowNumber = 0; rowNumber < rowsOnPage; rowNumber++)
+                {
+                    var positioned = PositionAtRowData(pageNumber, rowNumber, page);
+                    if (positioned != null)
                     {
-                        references.TryGetValue(rowPage, out int count);
-                        references[rowPage] = count + 1;
+                        var rowPages = new HashSet<int>();
+                        CollectRowLongValuePages(positioned.Value.page, positioned.Value.rowStart,
+                            positioned.Value.rowEnd, rowPages);
+                        foreach (int rowPage in rowPages)
+                        {
+                            references.TryGetValue(rowPage, out int count);
+                            references[rowPage] = count + 1;
+                        }
                     }
                 }
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(page);
         }
 
         foreach ((int pageNumber, int count) in references)
@@ -1790,6 +1817,12 @@ public sealed class Table
 
         NullMask nullMask = ReadRowNullMask(page, rowStart, rowEnd);
 
+        // Jump-table offsets are row-level: decode once instead of once per
+        // variable-length column (Jet 3 path).
+        short[]? varColumnOffsets = format.SizeRowVarColOffset == 2 || _varColumns.Count == 0
+            ? null
+            : ReadJumpTableVarColOffsets(page, rowStart, rowEnd, nullMask);
+
         var values = new object?[_columns.Count];
         for (int i = 0; i < _columns.Count; i++)
         {
@@ -1823,9 +1856,8 @@ public sealed class Table
             }
             else
             {
-                // jump-table based var length values
-                short[] varColumnOffsets = ReadJumpTableVarColOffsets(page, rowStart, rowEnd, nullMask);
-                int varDataStart = varColumnOffsets[column.VarLenTableIndex];
+                // jump-table based var length values (decoded once per row above)
+                int varDataStart = varColumnOffsets![column.VarLenTableIndex];
                 int varDataEnd = varColumnOffsets[column.VarLenTableIndex + 1];
                 if (varDataStart < 0 || varDataEnd < varDataStart || rowStart + varDataEnd > rowEnd)
                 {
@@ -1916,9 +1948,28 @@ public sealed class Table
             return Array.Empty<AccessSingleValue>();
         }
 
-        var children = info.FlatTable.Rows()
-            .Where(row => TryInt(row[foreignColumn.ColumnIndex], out int key) && key == complexKey)
-            .ToList();
+        // Grouped lookup instead of a full flat-table scan per parent row:
+        // O(N+M) for the enumeration instead of O(N*M).
+        if (!_complexChildLookup.TryGetValue(column.ColumnIndex, out Dictionary<int, List<Row>>? byKey))
+        {
+            byKey = new Dictionary<int, List<Row>>();
+            foreach (Row row in info.FlatTable.Rows())
+            {
+                if (TryInt(row[foreignColumn.ColumnIndex], out int key))
+                {
+                    if (!byKey.TryGetValue(key, out List<Row>? matches))
+                    {
+                        matches = new List<Row>();
+                        byKey[key] = matches;
+                    }
+                    matches.Add(row);
+                }
+            }
+            _complexChildLookup[column.ColumnIndex] = byKey;
+        }
+        List<Row> children = byKey.TryGetValue(complexKey, out List<Row>? keyed)
+            ? keyed
+            : new List<Row>();
         if (info.ComplexTypeObjectId == 39
             || info.FlatTable.Columns.Any(c => c.Name.Equals("FileData", StringComparison.OrdinalIgnoreCase)))
         {
@@ -2061,6 +2112,7 @@ public sealed class Table
 
     private void WriteComplexChildren(IReadOnlyList<ComplexWrite> writes, bool replaceExisting)
     {
+        _complexChildLookup.Clear();
         foreach (ComplexWrite write in writes)
         {
             Column? foreignColumn = write.Info.FlatTable.Columns.FirstOrDefault(c =>
@@ -2092,9 +2144,10 @@ public sealed class Table
         }
     }
 
-    private static void DeleteComplexChildren(
+    private void DeleteComplexChildren(
         IReadOnlyList<(ComplexColumnInfo Info, Column Column, int Key)> deletes)
     {
+        _complexChildLookup.Clear();
         foreach ((ComplexColumnInfo info, Column column, int key) in deletes)
         {
             Column? foreignColumn = info.FlatTable.Columns.FirstOrDefault(c =>

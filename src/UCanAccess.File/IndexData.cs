@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 
 namespace UCanAccess.File;
@@ -1234,18 +1235,21 @@ internal sealed class IndexData
         // binary data is written in 8 byte segments with a trailing length byte. The
         // length byte is the amount of valid bytes in the segment (where 9 indicates
         // that there is more data _after_ this segment).
-        var partialEntryBytes = new byte[9];
+        Span<byte> partialEntryBytes = stackalloc byte[9];
 
         // first, write any intermediate segments
         int segmentLen = dataLen;
         int pos = 0;
         while (segmentLen > 8)
         {
-            Array.Copy(valueBytes, pos, partialEntryBytes, 0, 8);
+            valueBytes.AsSpan(pos, 8).CopyTo(partialEntryBytes);
             if (!isAscending)
             {
                 // note, we do _not_ flip the length byte for intermediate segments
-                IndexCodes.FlipBytes(partialEntryBytes, 0, 8);
+                for (int i = 0; i < 8; i++)
+                {
+                    partialEntryBytes[i] = (byte)~partialEntryBytes[i];
+                }
             }
 
             // we are writing intermediate segments (there is more data after this
@@ -1261,7 +1265,7 @@ internal sealed class IndexData
         // write the last segment (with slightly different rules)
         if (segmentLen > 0)
         {
-            Array.Copy(valueBytes, pos, partialEntryBytes, 0, segmentLen);
+            valueBytes.AsSpan(pos, segmentLen).CopyTo(partialEntryBytes);
 
             // clear out any intermediate bytes between the real data and the final length byte
             for (int i = segmentLen; i < 8; ++i)
@@ -1274,7 +1278,10 @@ internal sealed class IndexData
             if (!isAscending)
             {
                 // note, we _do_ flip the last length byte
-                IndexCodes.FlipBytes(partialEntryBytes, 0, 9);
+                for (int i = 0; i < 9; i++)
+                {
+                    partialEntryBytes[i] = (byte)~partialEntryBytes[i];
+                }
             }
 
             bout.Write(partialEntryBytes);
@@ -1685,18 +1692,18 @@ internal sealed class IndexData
             {
                 // write entry bytes, not including prefix
                 output.Write(entryBytes, prefix.Length, entryBytes.Length - prefix.Length);
-                var tmp = new byte[3];
-                ByteUtil.Put3ByteIntBigEndian(tmp, 0, _rowId.PageNumber);
+                Span<byte> tmp = stackalloc byte[3];
+                ByteUtil.Put3ByteIntBigEndian(tmp, _rowId.PageNumber);
                 output.Write(tmp);
             }
             else if (prefix.Length <= entryBytes.Length + 3)
             {
                 // the prefix includes part of the page number, write to temp buffer
                 // and copy last bytes to output buffer
-                var tmp = new byte[3];
-                ByteUtil.Put3ByteIntBigEndian(tmp, 0, _rowId.PageNumber);
+                Span<byte> tmp = stackalloc byte[3];
+                ByteUtil.Put3ByteIntBigEndian(tmp, _rowId.PageNumber);
                 int skip = prefix.Length - entryBytes.Length;
-                output.Write(tmp, skip, tmp.Length - skip);
+                output.Write(tmp[skip..]);
             }
             else
             {
@@ -1779,8 +1786,8 @@ internal sealed class IndexData
         internal override void Write(ByteStream output, byte[] prefix)
         {
             base.Write(output, prefix);
-            var tmp = new byte[4];
-            ByteUtil.PutIntBigEndian(tmp, 0, _subPageNumber);
+            Span<byte> tmp = stackalloc byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(tmp, _subPageNumber);
             output.Write(tmp);
         }
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Performance (provider): memoized per-mirror SQL translation (`Mirror.TranslateQuery`,
+  also used by DML/CTAS paths) with `TranslationCacheTests`; hoisted
+  `last_insert_rowid()` command out of the `LoadData` row loop; cached compiled
+  `LIKE` regexes; `ExactDecimal` cached powers of ten, span-based parsing
+  without exceptions, `string.Create` formatting and same-scale add fast path;
+  `IsExactDecimalColumn` O(1) lookup; source-generated regexes for per-command
+  patterns; tokenizer/translator capacity hints and branchless aggregate matching.
+- Performance (file layer): pooled page buffers in table scans, `stackalloc`
+  GUID/numeric/index scratch buffers, cached decimal powers, jump-table offsets
+  decoded once per row (Jet 3), complex child rows grouped once per read with
+  write invalidation, pooled encrypted-write buffers. See `docs/PERFORMANCE.md`
+  for before/after numbers (`ProviderBenchmarkTests`, opt-in `UCANACCESS_PERF=1`).
 - Unified the build: `TreatWarningsAsErrors=true` locally and in CI,
   `EnableNETAnalyzers=true`, single `JustyBaseParserVersion` 0.8.7 consumed via
   `$(JustyBaseParserVersion)`, plus repo `.editorconfig`/`global.json` (S1).
