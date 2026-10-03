@@ -151,6 +151,39 @@ public class MetadataTests
     }
 
     [Fact]
+    public void GetSchema_column_restrictions_filter_columns()
+    {
+        using var conn = Open("sqljoin.mdb");
+        DataTable columns = conn.GetSchema("Columns", new string?[] { null, null, "t_master", "name" });
+        Assert.Equal(1, columns.Rows.Count);
+        Assert.Equal("name", columns.Rows[0]["COLUMN_NAME"]);
+        DataTable tableOnly = conn.GetSchema("Columns", new string?[] { null, null, "t_master" });
+        Assert.True(tableOnly.Rows.Count > 1);
+    }
+
+    [Fact]
+    public void GetSchema_index_restrictions_filter_indexes()
+    {
+        using var conn = Open("generated/genIndexed.mdb");
+        DataTable indexes = conn.GetSchema("Indexes", new string?[] { null, null, "t_indexed", null, null, "idx_code" });
+        Assert.NotEmpty(indexes.Rows);
+        Assert.All(indexes.AsEnumerable(), r => Assert.Equal("idx_code", r.Field<string>("INDEX_NAME")));
+        DataTable indexColumns = conn.GetSchema("IndexColumns", new string?[] { null, null, "t_indexed", "idx_code" });
+        Assert.NotEmpty(indexColumns.Rows);
+    }
+
+    [Fact]
+    public void GetSchema_foreign_key_restrictions_and_column_defaults()
+    {
+        using var conn = Open("sqljoin.mdb");
+        DataTable fks = conn.GetSchema("ForeignKeys", new string?[] { null, null, null, null, null, "t_detail" });
+        Assert.NotEmpty(fks.Rows);
+        DataTable columns = conn.GetSchema("Columns", new string?[] { null, null, "t_detail" });
+        Assert.NotEmpty(columns.Rows);
+        Assert.Contains(columns.Columns.Cast<DataColumn>(), c => c.ColumnName == "COLUMN_DEFAULT");
+    }
+
+    [Fact]
     public void GetSchema_table_type_restriction_filters_views_and_tables()
     {
         using var conn = Open("accessLike.mdb");

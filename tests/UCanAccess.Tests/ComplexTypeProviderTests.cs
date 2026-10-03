@@ -61,8 +61,11 @@ public sealed class ComplexTypeProviderTests
             Assert.True(reader.Read());
             Assert.Equal("provider",
                 Assert.Single(Assert.IsType<AccessSingleValue[]>(reader.GetValue(0))).Value);
-            Assert.Equal("provider.bin",
-                Assert.Single(Assert.IsType<AccessAttachment[]>(reader.GetValue(1))).FileName);
+            AccessAttachment stored = Assert.Single(Assert.IsType<AccessAttachment[]>(reader.GetValue(1)));
+            Assert.Equal("provider.bin", stored.FileName);
+            Assert.Equal("bin", stored.FileType);
+            Assert.Equal(0, stored.FileFlags);
+            Assert.Equal(new byte[] { 7 }, stored.FileData);
         }
         finally
         {

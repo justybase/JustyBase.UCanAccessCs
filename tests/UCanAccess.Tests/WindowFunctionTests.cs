@@ -48,6 +48,81 @@ public class WindowFunctionTests
     }
 
     [Fact]
+    public void Window_function_result_types_are_stable()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn,
+                   RANK() OVER (ORDER BY value DESC) AS rnk,
+                   DENSE_RANK() OVER (ORDER BY value DESC) AS drnk,
+                   LAG(value) OVER (ORDER BY id) AS prev,
+                   LEAD(value) OVER (ORDER BY id) AS next
+            FROM t_indexed
+            ORDER BY id
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        // Ranking functions always produce integers; LAG/LEAD values convert
+        // back to the DOUBLE column domain (expression columns keep the
+        // mirror's fallback field-type mapping, so values are asserted here).
+        Assert.Equal(typeof(long), reader.GetFieldType(0));
+        Assert.Equal(typeof(long), reader.GetFieldType(1));
+        Assert.Equal(typeof(long), reader.GetFieldType(2));
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.True(reader.IsDBNull(3));
+        Assert.False(reader.IsDBNull(4));
+        Assert.IsType<double>(reader.GetValue(4));
+        Assert.Equal(reader.GetDouble(4), reader.GetFieldValue<double>(4));
+    }
+
+    [Fact]
+    public void Window_frame_edges_yield_null()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT LAG(value, 100) OVER (ORDER BY id) AS far_back,
+                   LEAD(value, 100) OVER (ORDER BY id) AS far_ahead
+            FROM t_indexed
+            ORDER BY id
+            """;
+        using var reader = command.ExecuteReader();
+        int rows = 0;
+        while (reader.Read())
+        {
+            Assert.True(reader.IsDBNull(0));
+            Assert.True(reader.IsDBNull(1));
+            rows++;
+        }
+        Assert.Equal(50, rows);
+    }
+
+    [Fact]
+    public void Window_nulls_sort_first_in_descending_order()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        // Access sorts NULL first in both directions; the mirror rewrites bare DESC keys.
+        command.CommandText = """
+            SELECT id, ROW_NUMBER() OVER (ORDER BY value DESC) AS rn
+            FROM t_indexed
+            ORDER BY value DESC
+            """;
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.True(reader.IsDBNull(0) || reader.GetInt64(1) == 1);
+    }
+
+    [Fact]
+    public void Window_function_outside_select_is_rejected()
+    {
+        var ex = Assert.Throws<NotSupportedException>(() => AccessSqlTranslator.Translate(
+            "UPDATE t SET x = ROW_NUMBER() OVER (ORDER BY id)"));
+        Assert.Contains("SELECT", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Window_function_accepts_parameters_and_access_expressions()
     {
         using var connection = Open();

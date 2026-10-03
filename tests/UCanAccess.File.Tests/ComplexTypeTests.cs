@@ -25,6 +25,58 @@ public sealed class ComplexTypeTests
     }
 
     [Fact]
+    public void Attachment_metadata_round_trips_through_flat_tables()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-complex-meta-{Guid.NewGuid():N}.accdb");
+        System.IO.File.Copy(Fixture("generated/complex.accdb"), path);
+        try
+        {
+            AccessAttachment source;
+            using (var db = Database.Open(path, readOnly: true))
+            {
+                source = Assert.Single(Assert.IsType<AccessAttachment[]>(
+                    Assert.Single(db.GetTable("ComplexFixture")!.Rows())[2]));
+                // COM-generated fixture carries full attachment metadata.
+                Assert.Equal("uca-attachment.txt", source.FileName);
+                Assert.Equal("txt", source.FileType);
+                Assert.NotNull(source.FileData);
+                Assert.NotEmpty(source.FileData!);
+            }
+
+            var copy = new AccessAttachment(
+                new byte[] { 10, 20, 30 },
+                source.FileFlags,
+                source.FileName,
+                source.FileTimeStamp,
+                source.FileType,
+                source.FileURL);
+            using (var db = Database.Open(path, readOnly: false))
+            {
+                db.GetTable("ComplexFixture")!.AddRow(new object?[]
+                {
+                    3, new[] { new AccessSingleValue("meta") }, new[] { copy },
+                });
+            }
+
+            using (var db = Database.Open(path, readOnly: true))
+            {
+                AccessAttachment reread = Assert.Single(Assert.IsType<AccessAttachment[]>(
+                    db.GetTable("ComplexFixture")!.Rows().Single(row => Convert.ToInt32(row[0]) == 3)[2]));
+                Assert.Equal(copy.FileFlags, reread.FileFlags);
+                Assert.Equal(copy.FileName, reread.FileName);
+                Assert.Equal(copy.FileTimeStamp, reread.FileTimeStamp);
+                Assert.Equal(copy.FileType, reread.FileType);
+                Assert.Equal(copy.FileURL, reread.FileURL);
+                Assert.Equal(copy.FileData, reread.FileData);
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Complex_metadata_exposes_hidden_flat_tables()
     {
         using var db = Database.Open(Fixture("generated/complex.accdb"));

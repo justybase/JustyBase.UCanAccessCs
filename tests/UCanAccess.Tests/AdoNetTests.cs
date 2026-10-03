@@ -634,4 +634,30 @@ public class AdoNetTests
         Assert.True(roundTrip.ImmediatelyReleaseResources);
         Assert.True(roundTrip.ShowSchema);
     }
+
+    [Fact]
+    public void Output_parameters_are_rejected_as_input_only()
+    {
+        using var conn = Open("sqljoin.mdb");
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT * FROM t_master WHERE id = ?";
+        var parameter = cmd.CreateParameter();
+        parameter.Value = 1;
+        parameter.Direction = ParameterDirection.Output;
+        cmd.Parameters.Add(parameter);
+        Assert.Throws<NotSupportedException>(() => cmd.ExecuteReader());
+    }
+
+    [Fact]
+    public void Return_value_parameters_are_rejected_as_input_only()
+    {
+        using var conn = Open("sqljoin.mdb");
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT * FROM t_master WHERE id = ?";
+        var parameter = cmd.CreateParameter();
+        parameter.Value = 1;
+        parameter.Direction = ParameterDirection.ReturnValue;
+        cmd.Parameters.Add(parameter);
+        Assert.Throws<NotSupportedException>(() => cmd.ExecuteScalar());
+    }
 }

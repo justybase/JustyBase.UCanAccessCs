@@ -1058,7 +1058,7 @@ public sealed class UCanAccessConnection : DbConnection
         foreach (Relationship relationship in _database!.GetRelationships())
         {
             if (restrictions != null && restrictions.Length > 2 && restrictions[2] != null
-                && !string.Equals(restrictions[2], relationship.FromTable.Name, StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(restrictions[2], relationship.Name, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

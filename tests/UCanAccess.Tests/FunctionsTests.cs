@@ -287,6 +287,24 @@ public class FunctionsTests
     }
 
     [Fact]
+    public void Java_financial_function_aliases()
+    {
+        // Absolute values from the Access/Excel financial definitions
+        // (periodic rate as a fraction, matching Access and UCanAccess).
+        Assert.Equal(1257.7893, ScalarAs<double>("SELECT FV(0.05, 10, -100)"), 4);
+        Assert.Equal(772.1735, ScalarAs<double>("SELECT PV(0.05, 10, -100)"), 4);
+        Assert.Equal(14.2067, ScalarAs<double>("SELECT NPER(0.05, -100, 1000)"), 4);
+        Assert.Equal(-100.0, ScalarAs<double>("SELECT IPMT(0.1, 1, 3, 1000)"), 6);
+        Assert.Equal(-302.1148, ScalarAs<double>("SELECT PPMT(0.1, 1, 3, 1000)"), 3);
+        Assert.Equal(400.0, ScalarAs<double>("SELECT DDB(1000, 100, 5, 1)"), 6);
+        Assert.Equal(173.5537, ScalarAs<double>("SELECT NPV(0.1, 100, 100)"), 4);
+        // MIRR over 3 values = 2 periods: (242/100)^(1/2)-1, matching Excel.
+        Assert.Equal(0.5556, ScalarAs<double>("SELECT MIRR(-100, 110, 121, 0.1, 0.1)"), 4);
+        // RATE inverts FV: the rounded FV above still recovers the 5% rate.
+        Assert.Equal(0.05, ScalarAs<double>("SELECT RATE(10, -100, 0, 1257.7893)"), 3);
+    }
+
+    [Fact]
     public void Extended_access_functions_are_available()
     {
         using var conn = Open("sqljoin.mdb");
