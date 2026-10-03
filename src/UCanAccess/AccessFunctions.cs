@@ -53,6 +53,13 @@ public static class AccessFunctions
             ? null
             : AccessLikePattern(AsString(a[0])!, AsString(a[1])!, ignoreCase), true);
 
+        // Complex-type filters (upstream Equals/EqualsIgnoreOrder/Contains).
+        // Mirror stores complex columns as JSON; parameters arrive as JSON via
+        // AccessValueCodec.ToSqliteParameter. NULL yields NULL (SQL UNKNOWN).
+        RegisterVar(connection, "Equals", a => ComplexEquals(a, ignoreOrder: false), true);
+        RegisterVar(connection, "EqualsIgnoreOrder", a => ComplexEquals(a, ignoreOrder: true), true);
+        RegisterVar(connection, "Contains", a => ComplexContains(a), true);
+
         // null handling / boolean
         RegisterVar(connection, "nz", a => Nz(a[0], a.Length > 1 ? a[1] : ""));
         // SQLite treats ISNULL as a keyword, so the Access IsNull() function is
@@ -1179,6 +1186,106 @@ public static class AccessFunctions
         }
         return next;
     }
+
+    // ------------------------------------------------------------------
+    // Complex-type filters (Equals / EqualsIgnoreOrder / Contains)
+    // ------------------------------------------------------------------
+
+    private static object? ComplexEquals(IReadOnlyList<object?> args, bool ignoreOrder)
+    {
+        if (args.Count < 2 || args[0] is null or DBNull || args[1] is null or DBNull)
+        {
+            return null;
+        }
+        List<string> left = ComplexCanonicalList(args[0]);
+        List<string> right = ComplexCanonicalList(args[1]);
+        if (ignoreOrder)
+        {
+            left.Sort(StringComparer.Ordinal);
+            right.Sort(StringComparer.Ordinal);
+        }
+        return left.SequenceEqual(right, StringComparer.Ordinal) ? 1L : 0L;
+    }
+
+    private static object? ComplexContains(IReadOnlyList<object?> args)
+    {
+        if (args.Count < 2 || args[0] is null or DBNull || args[1] is null or DBNull)
+        {
+            return null;
+        }
+        List<string> haystack = ComplexCanonicalList(args[0]);
+        List<string> needle = ComplexCanonicalList(args[1]);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string item in haystack)
+        {
+            counts[item] = counts.TryGetValue(item, out int c) ? c + 1 : 1;
+        }
+        foreach (string item in needle)
+        {
+            if (!counts.TryGetValue(item, out int c) || c == 0)
+            {
+                return 0L;
+            }
+            counts[item] = c - 1;
+        }
+        return 1L;
+    }
+
+    private static List<string> ComplexCanonicalList(object? value)
+    {
+        // Mirror JSON, CLR arrays (parameters that bypassed the codec), or single values.
+        object? normalized = value switch
+        {
+            string json when IsComplexJson(json) => ComplexValueJson.Deserialize(json),
+            UCanAccess.File.AccessSingleValue[] single => single,
+            UCanAccess.File.AccessAttachment[] attachments => attachments,
+            UCanAccess.File.AccessVersion[] versions => versions,
+            UCanAccess.File.AccessSingleValue single => new[] { single },
+            UCanAccess.File.AccessAttachment attachment => new[] { attachment },
+            UCanAccess.File.AccessVersion version => new[] { version },
+            System.Collections.IEnumerable enumerable and not string => enumerable.Cast<object?>().ToArray(),
+            _ => new[] { value },
+        };
+        return normalized switch
+        {
+            UCanAccess.File.AccessSingleValue[] single => single.Select(CanonicalSingle).ToList(),
+            UCanAccess.File.AccessAttachment[] attachments => attachments.Select(CanonicalAttachment).ToList(),
+            UCanAccess.File.AccessVersion[] versions => versions.Select(CanonicalVersion).ToList(),
+            object?[] array => array.Select(CanonicalScalar).ToList(),
+            _ => new List<string> { CanonicalScalar(normalized) },
+        };
+    }
+
+    private static bool IsComplexJson(string text)
+    {
+        text = text.TrimStart();
+        return text.StartsWith("{", StringComparison.Ordinal) && text.Contains("Values", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CanonicalSingle(UCanAccess.File.AccessSingleValue value)
+        => "S:" + CanonicalScalar(value.Value);
+
+    private static string CanonicalAttachment(UCanAccess.File.AccessAttachment value)
+        => "A:" + (value.FileName ?? "") + "|" + (value.FileType ?? "") + "|"
+            + (value.FileFlags?.ToString(CultureInfo.InvariantCulture) ?? "") + "|"
+            + (value.FileURL ?? "") + "|"
+            + (value.FileData == null ? "" : Convert.ToBase64String(value.FileData));
+
+    private static string CanonicalVersion(UCanAccess.File.AccessVersion value)
+        => "V:" + CanonicalScalar(value.Value) + "|"
+            + (value.Modified?.Ticks.ToString(CultureInfo.InvariantCulture) ?? "");
+
+    private static string CanonicalScalar(object? value)
+        => value switch
+        {
+            null or DBNull => "null",
+            bool b => b ? "true" : "false",
+            string s => "str:" + s,
+            byte[] bytes => "bytes:" + Convert.ToBase64String(bytes),
+            DateTime dt => "dt:" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
+            IFormattable formattable => "num:" + formattable.ToString(null, CultureInfo.InvariantCulture),
+            _ => "obj:" + (value.ToString() ?? ""),
+        };
 
     // ------------------------------------------------------------------
     // Access LIKE

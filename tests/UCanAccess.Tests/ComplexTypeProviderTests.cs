@@ -101,4 +101,78 @@ public sealed class ComplexTypeProviderTests
             System.IO.File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Equals_matches_exact_order()
+    {
+        using var connection = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("generated/complex.accdb")};Read Only=true",
+        };
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM ComplexFixture WHERE Equals(Tags, ?)";
+        var parameter = command.CreateParameter();
+        parameter.Value = new[] { new AccessSingleValue("alpha"), new AccessSingleValue("beta") };
+        command.Parameters.Add(parameter);
+        Assert.Equal(1L, command.ExecuteScalar());
+    }
+
+    [Fact]
+    public void Equals_is_order_sensitive()
+    {
+        using var connection = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("generated/complex.accdb")};Read Only=true",
+        };
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM ComplexFixture WHERE Equals(Tags, ?)";
+        var parameter = command.CreateParameter();
+        parameter.Value = new[] { new AccessSingleValue("beta"), new AccessSingleValue("alpha") };
+        command.Parameters.Add(parameter);
+        Assert.Equal(0L, command.ExecuteScalar());
+    }
+
+    [Fact]
+    public void EqualsIgnoreOrder_ignores_order()
+    {
+        using var connection = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("generated/complex.accdb")};Read Only=true",
+        };
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM ComplexFixture WHERE EqualsIgnoreOrder(Tags, ?)";
+        var parameter = command.CreateParameter();
+        parameter.Value = new[] { new AccessSingleValue("beta"), new AccessSingleValue("alpha") };
+        command.Parameters.Add(parameter);
+        Assert.Equal(1L, command.ExecuteScalar());
+    }
+
+    [Fact]
+    public void Contains_matches_subset()
+    {
+        using var connection = new UCanAccessConnection
+        {
+            ConnectionString = $"Data Source={Fixture("generated/complex.accdb")};Read Only=true",
+        };
+        connection.Open();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT count(*) FROM ComplexFixture WHERE Contains(Tags, ?)";
+            var parameter = command.CreateParameter();
+            parameter.Value = new[] { new AccessSingleValue("alpha") };
+            command.Parameters.Add(parameter);
+            Assert.Equal(1L, command.ExecuteScalar());
+        }
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT count(*) FROM ComplexFixture WHERE Contains(Tags, ?)";
+            var parameter = command.CreateParameter();
+            parameter.Value = new[] { new AccessSingleValue("missing") };
+            command.Parameters.Add(parameter);
+            Assert.Equal(0L, command.ExecuteScalar());
+        }
+    }
 }

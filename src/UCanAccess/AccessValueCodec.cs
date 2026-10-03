@@ -55,6 +55,7 @@ internal static class AccessValueCodec
         => value switch
         {
             null or DBNull => DBNull.Value,
+            AccessSingleValue[] or AccessAttachment[] or AccessVersion[] => ComplexValueJson.Serialize(value),
             decimal number => ExactDecimal.FromDecimal(number).ToString(),
             float number => number.ToString("R", CultureInfo.InvariantCulture),
             double number => number.ToString("R", CultureInfo.InvariantCulture),
