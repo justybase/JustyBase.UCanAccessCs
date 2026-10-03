@@ -989,7 +989,7 @@ public static class AccessDdl
                 if (PeekWord(tokens, pos, "primary"))
                 {
                     throw new NotSupportedException(
-                        "ALTER TABLE DROP PRIMARY KEY is not supported by the UCanAccess 5.1.6 compatibility baseline.");
+                        "ALTER TABLE DROP PRIMARY KEY is not supported by the UCanAccess 5.1.7 compatibility baseline.");
                 }
                 if (PeekWord(tokens, pos, "constraint"))
                 {

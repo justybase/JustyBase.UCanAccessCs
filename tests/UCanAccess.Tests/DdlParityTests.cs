@@ -166,7 +166,7 @@ public class DdlParityTests
     public void Same_ddl_produces_same_schema_as_java()
     {
         if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
-            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.6.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.7.jar") == null
             || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
         {
             _output.WriteLine("SKIPPED: java/jars/classes not available");
@@ -191,7 +191,7 @@ public class DdlParityTests
 
             string jackJar = FindJar("jackcess-5.1.5.jar")!;
             string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
-            string ucaJar = FindJar("ucanaccess-5.1.6.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.7.jar")!;
             string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
             RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
 
@@ -265,7 +265,7 @@ public class DdlParityTests
 
             string jackJar = FindJar("jackcess-5.1.5.jar")!;
             string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
-            string ucaJar = FindJar("ucanaccess-5.1.6.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.7.jar")!;
             string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
             RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
 
@@ -292,7 +292,7 @@ public class DdlParityTests
     public void Delete_star_from_produces_same_file_state_as_java()
     {
         if (!JavaAvailable() || FindJar("jackcess-5.1.5.jar") == null
-            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.6.jar") == null
+            || FindJar("hsqldb-2.7.4.jar") == null || FindJar("ucanaccess-5.1.7.jar") == null
             || !Directory.Exists(Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes")))
         {
             _output.WriteLine("SKIPPED: java/jars/classes not available");
@@ -316,7 +316,7 @@ public class DdlParityTests
 
             string jackJar = FindJar("jackcess-5.1.5.jar")!;
             string hsqldbJar = FindJar("hsqldb-2.7.4.jar")!;
-            string ucaJar = FindJar("ucanaccess-5.1.6.jar")!;
+            string ucaJar = FindJar("ucanaccess-5.1.7.jar")!;
             string classesDir = Path.Combine(RepoRoot(), "tools", "JavaOracle", "classes");
             RunDdlRunner(jackJar, hsqldbJar, ucaJar, classesDir, javaCopy, scriptPath);
 

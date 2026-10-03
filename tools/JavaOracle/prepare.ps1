@@ -84,14 +84,14 @@ if (-not (Test-Path $jackJar)) {
     Invoke-WebRequest -Uri "$m2/jackcess-$jackVersion.jar" -OutFile $jackJar
 }
 
-$ucaJar = Join-Path $tmp "ucanaccess-5.1.6.jar"
+$ucaJar = Join-Path $tmp "ucanaccess-5.1.7.jar"
 $hsqldbJar = Join-Path $tmp "hsqldb-2.7.4.jar"
 foreach ($jar in @($ucaJar, $hsqldbJar)) {
     if (-not (Test-Path $jar)) {
         $name = [System.IO.Path]::GetFileName($jar)
         Write-Host "Downloading $name ..."
         if ($name -like "ucanaccess*") {
-            Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/io/github/spannm/ucanaccess/5.1.6/$name" -OutFile $jar
+            Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/io/github/spannm/ucanaccess/5.1.7/$name" -OutFile $jar
         } else {
             Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/org/hsqldb/hsqldb/2.7.4/$name" -OutFile $jar
         }
