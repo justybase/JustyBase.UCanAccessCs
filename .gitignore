@@ -1,11 +1,17 @@
-# NuGet (dotnet)
-bin/
-obj/
+# Build outputs (dotnet / MSBuild)
+[Bb]in/
+[Oo]bj/
+artifacts/
+*.binlog
 *.user
 .vs/
+.vscode/
 **/TestResults/
 *.nupkg
 *.snupkg
+*.coverage
+*.coveragexml
+coverage*/
 
 # Rider / IDEA
 .idea/

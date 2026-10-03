@@ -4,11 +4,13 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <TreatWarningsAsErrors Condition="'$(CI)' == 'true'">true</TreatWarningsAsErrors>
-    <TreatWarningsAsErrors Condition="'$(CI)' != 'true'">false</TreatWarningsAsErrors>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- Keep CI strict for actionable warnings while documenting the legacy
-         public surface incrementally. -->
+    <!-- Strict compiler warnings (local == CI). IDE style stays as suggestion
+         so EnforceCodeStyleInBuild=false keeps builds green; promotion to
+         warnings happens explicitly via .editorconfig severities. -->
     <NoWarn>$(NoWarn);1591;1573;0419</NoWarn>
     <Deterministic>true</Deterministic>
     <Version>1.0.3</Version>
@@ -23,6 +25,6 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Pure .NET reader/writer for Microsoft Access database files (.mdb/.accdb) - a port of Jackcess/UCanAccess.</Description>
     <!-- Version of the JustyBase.NetezzaSqlParser package (SQL lexer infrastructure). -->
-    <JustyBaseParserVersion Condition="'$(JustyBaseParserVersion)' == ''">0.8.2</JustyBaseParserVersion>
+    <JustyBaseParserVersion Condition="'$(JustyBaseParserVersion)' == ''">0.8.7</JustyBaseParserVersion>
   </PropertyGroup>
 </Project>
