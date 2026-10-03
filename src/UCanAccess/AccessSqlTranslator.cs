@@ -71,7 +71,8 @@ public static class AccessSqlTranslator
     public static string Translate(string accessSql, out int parameterCount, out IReadOnlyList<string>? namedParameters,
         Func<string, bool>? isMoneyColumn = null,
         Func<string, bool>? isExactDecimalColumn = null,
-        Func<string, bool>? isDateColumn = null)
+        Func<string, bool>? isDateColumn = null,
+        bool concatNulls = false)
     {
         if (AccessAstSqliteEmitter.TryTranslate(
                 accessSql,
@@ -80,7 +81,8 @@ public static class AccessSqlTranslator
                 out namedParameters,
                 isMoneyColumn,
                 isExactDecimalColumn,
-                isDateColumn))
+                isDateColumn,
+                concatNulls))
         {
             return astTranslated;
         }
@@ -91,7 +93,8 @@ public static class AccessSqlTranslator
             out namedParameters,
             isMoneyColumn,
             isExactDecimalColumn,
-            isDateColumn);
+            isDateColumn,
+            concatNulls);
     }
 
     internal static bool IsAstCandidate(string accessSql)
@@ -106,12 +109,13 @@ public static class AccessSqlTranslator
         out IReadOnlyList<string>? namedParameters,
         Func<string, bool>? isMoneyColumn = null,
         Func<string, bool>? isExactDecimalColumn = null,
-        Func<string, bool>? isDateColumn = null)
+        Func<string, bool>? isDateColumn = null,
+        bool concatNulls = false)
     {
         if (CrosstabTranslator.TryTranslate(accessSql, isExactDecimalColumn, out string crosstabSql))
         {
             return TranslateLegacy(crosstabSql, out parameterCount, out namedParameters,
-                isMoneyColumn, isExactDecimalColumn, isDateColumn);
+                isMoneyColumn, isExactDecimalColumn, isDateColumn, concatNulls);
         }
 
         string prepared = Preprocess(accessSql, out List<string> names);
@@ -206,10 +210,31 @@ public static class AccessSqlTranslator
                     right = MaybeWrapMoney(work, i + 1, rightEnd, right, isMoneyColumn);
                 }
 
-                string replacement = $"(ifnull({left}, '') || ifnull({right}, ''))";
-                ReplaceTokens(work, leftStart, rightEnd, replacement);
+                // Upstream concatNulls=false (default since 3.0): NULL maps to ''.
+                // concatNulls=true restores the pre-3.0 NULL-propagating behavior.
+                // Skip past the inserted fragment: it contains '||' which must
+                // not be reprocessed as a concat operator.
+                string replacement = concatNulls
+                    ? $"({left} || {right})"
+                    : $"(ifnull({left}, '') || ifnull({right}, ''))";
+                int inserted = ReplaceTokens(work, leftStart, rightEnd, replacement);
 
-                i = leftStart;
+                i = leftStart + inserted - 1;
+            }
+            else if (t.Text == "||" && IsStringConcatContext(work, i))
+            {
+                // Access '||' follows the same concatNulls contract as '&'.
+                int leftStart = FindLeftOperandStart(work, i);
+                int rightEnd = FindRightOperandEnd(work, i + 1);
+
+                string left = Join(work, leftStart, i);
+                string right = Join(work, i + 1, rightEnd);
+                string replacement = concatNulls
+                    ? $"({left} || {right})"
+                    : $"(ifnull({left}, '') || ifnull({right}, ''))";
+                int inserted = ReplaceTokens(work, leftStart, rightEnd, replacement);
+
+                i = leftStart + inserted - 1;
             }
         }
 
@@ -802,10 +827,12 @@ public static class AccessSqlTranslator
         return prev.Text is "(" or "." || cur.Text is ")" or "," or "(" or ".";
     }
 
-    private static void ReplaceTokens(List<Token> work, int start, int endExclusive, string sqlFragment)
+    private static int ReplaceTokens(List<Token> work, int start, int endExclusive, string sqlFragment)
     {
         work.RemoveRange(start, endExclusive - start);
-        work.InsertRange(start, Tokenize(sqlFragment));
+        List<Token> inserted = Tokenize(sqlFragment);
+        work.InsertRange(start, inserted);
+        return inserted.Count;
     }
 
     private static string Join(List<Token> work, int start, int end)

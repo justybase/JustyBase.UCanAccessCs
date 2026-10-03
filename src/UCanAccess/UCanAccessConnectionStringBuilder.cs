@@ -164,6 +164,37 @@ public sealed class UCanAccessConnectionStringBuilder : DbConnectionStringBuilde
         set => this["New Database Version"] = value;
     }
 
+    /// <summary>Upstream linked-db remap: orig|new&amp;orig2|new2 (trusted explicit config).</summary>
+    public string? Remap
+    {
+        get => Parsed.Remap;
+        set => this["Remap"] = value;
+    }
+
+    public bool SkipIndexes
+    {
+        get => Parsed.SkipIndexes;
+        set => this["Skip Indexes"] = value;
+    }
+
+    public bool OpenExclusive
+    {
+        get => Parsed.OpenExclusive;
+        set => this["Open Exclusive"] = value;
+    }
+
+    public bool IgnoreCase
+    {
+        get => Parsed.IgnoreCase;
+        set => this["Ignore Case"] = value;
+    }
+
+    public bool ConcatNulls
+    {
+        get => Parsed.ConcatNulls;
+        set => this["Concat Nulls"] = value;
+    }
+
     public string? Encoding
     {
         get => Parsed.EncodingName;

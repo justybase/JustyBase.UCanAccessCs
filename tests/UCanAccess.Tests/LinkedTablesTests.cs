@@ -84,4 +84,69 @@ public class LinkedTablesTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void Remap_resolves_renamed_linkee()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"ucanaccess_remap_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        string linked = Path.Combine(dir, "genLinked.mdb");
+        string renamed = Path.Combine(dir, "renamed.mdb");
+        string fixtures = Path.Combine(AppContext.BaseDirectory, "fixtures", "generated");
+        System.IO.File.Copy(Path.Combine(fixtures, "genLinked.mdb"), linked, true);
+        System.IO.File.Copy(Path.Combine(fixtures, "genLinkee.mdb"), renamed, true);
+        try
+        {
+            var conn = UCanAccessFactory.Instance.CreateConnection()!;
+            conn.ConnectionString = $"Data Source={linked};Read Only=true;Remap=genLinkee.mdb|{renamed}";
+            conn.Open();
+            using var _ = conn;
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT count(*) FROM t_linked";
+            Assert.Equal(2L, cmd.ExecuteScalar());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Remap_allows_external_path_without_allow_external_links()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"ucanaccess_remap_{Guid.NewGuid():N}");
+        string outer = Path.Combine(Path.GetTempPath(), $"ucanaccess_remap_outer_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(outer);
+        string linked = Path.Combine(dir, "genLinked.mdb");
+        string outside = Path.Combine(outer, "outside.mdb");
+        string fixtures = Path.Combine(AppContext.BaseDirectory, "fixtures", "generated");
+        System.IO.File.Copy(Path.Combine(fixtures, "genLinked.mdb"), linked, true);
+        System.IO.File.Copy(Path.Combine(fixtures, "genLinkee.mdb"), outside, true);
+        try
+        {
+            // Remap is trusted explicit config: it bypasses the AllowExternalLinks guard.
+            var conn = UCanAccessFactory.Instance.CreateConnection()!;
+            conn.ConnectionString = $"Data Source={linked};Read Only=true;Remap=genLinkee.mdb|{outside}";
+            conn.Open();
+            using var _ = conn;
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT count(*) FROM t_linked";
+            Assert.Equal(2L, cmd.ExecuteScalar());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            Directory.Delete(outer, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Remap_invalid_entry_is_rejected()
+    {
+        var conn = UCanAccessFactory.Instance.CreateConnection()!;
+        conn.ConnectionString =
+            $"Data Source={Path.Combine(AppContext.BaseDirectory, "fixtures", "generated", "genLinked.mdb")};Read Only=true;Remap=no-separator";
+        Assert.Throws<ArgumentException>(() => conn.Open());
+    }
 }

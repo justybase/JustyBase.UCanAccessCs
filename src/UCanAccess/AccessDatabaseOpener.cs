@@ -9,7 +9,9 @@ public sealed record AccessDatabaseOpenRequest(
     bool ReadOnly,
     Encoding? Encoding,
     bool AllowExternalLinks,
-    string? Password);
+    string? Password,
+    IReadOnlyDictionary<string, string>? LinkRemap = null,
+    bool OpenExclusive = false);
 
 /// <summary>
 /// Opens an Access file, optionally decoding a password-protected/encrypted

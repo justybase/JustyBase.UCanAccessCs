@@ -106,4 +106,51 @@ public class LinkedWriteTests
         }
         throw new InvalidOperationException($"row '{name}' not found");
     }
+
+    [Fact]
+    public void Remap_resolves_to_renamed_linkee()
+    {
+        string tmpDir = Path.Combine(Path.GetTempPath(), $"ucanaccess_remap_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            string main = Path.Combine(tmpDir, "main.mdb");
+            string linkee = Path.Combine(tmpDir, "linkee.mdb");
+            string renamed = Path.Combine(tmpDir, "renamed.mdb");
+            using (var db = Database.Create(linkee))
+            {
+                db.CreateTable("t_linkee",
+                    new[] { new ColumnBuilder("id", DataType.Long).WithAutoNumber(true), new ColumnBuilder("name", DataType.Text).WithLength(50) });
+                db.GetTable("t_linkee")!.AddRow(new object?[] { null, "seed" });
+            }
+            System.IO.File.Copy(linkee, renamed, true);
+            using (var mainDb = Database.Create(main))
+            {
+                AddLinkedTableRow(mainDb, "t_linked", "linkee.mdb", "t_linkee");
+            }
+
+            // Without remap the renamed file is invisible: linkee.mdb is missing.
+            System.IO.File.Delete(linkee);
+            using (var db = Database.Open(main))
+            {
+                Assert.Throws<DatabaseException>(() => db.GetLinkedTable("t_linked"));
+            }
+
+            // With remap original|new the renamed file is used (trusted explicit config).
+            var remap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["linkee.mdb"] = renamed,
+            };
+            using (var db = Database.Open(main, linkRemap: remap))
+            {
+                var t = db.GetLinkedTable("t_linked")!;
+                Assert.Equal("t_linkee", t.Name);
+                Assert.Contains(t.Rows().Select(r => (string)r["name"]!), n => n == "seed");
+            }
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, true);
+        }
+    }
 }

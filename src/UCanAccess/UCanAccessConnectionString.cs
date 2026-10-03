@@ -24,6 +24,11 @@ namespace UCanAccess;
 ///   Time Zone                              -- accepted for compatibility; Access values remain timezone-free
 ///   Prefer Date Timestamp                  -- accepted for compatibility; Access values retain provider precision
 ///   New Database Version                   -- version for created databases (2000/2002/2003/2007/2010/2016)
+///   Remap                                  -- upstream linked-db remap: orig|new&amp;orig2|new2 (trusted explicit config)
+///   Skip Indexes                           -- upstream alias; accepted, mirror has no secondary indexes (default false)
+///   Open Exclusive | Lock Mdb              -- lock the file even for Read Only opens (default false)
+///   Ignore Case                            -- case-insensitive text comparison (default true)
+///   Concat Nulls                           -- NULL &amp; 'x' yields NULL when true, 'x' when false (default false)
 /// </summary>
 public sealed class UCanAccessConnectionString
 {
@@ -71,6 +76,17 @@ public sealed class UCanAccessConnectionString
         ["allowexternallinks"] = "allowexternallinks",
         ["new database version"] = "newdatabaseversion",
         ["newdatabaseversion"] = "newdatabaseversion",
+        ["remap"] = "remap",
+        ["skip indexes"] = "skipindexes",
+        ["skipindexes"] = "skipindexes",
+        ["open exclusive"] = "openexclusive",
+        ["openexclusive"] = "openexclusive",
+        ["lock mdb"] = "openexclusive",
+        ["lockmdb"] = "openexclusive",
+        ["ignore case"] = "ignorecase",
+        ["ignorecase"] = "ignorecase",
+        ["concat nulls"] = "concatnulls",
+        ["concatnulls"] = "concatnulls",
     };
 
     private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
@@ -213,6 +229,77 @@ public sealed class UCanAccessConnectionString
     /// <summary>version of a newly created database: "2000", "2002", "2003", "2007", "2010" or "2016" (null = don't create)</summary>
     public string? NewDatabaseVersion
         => _values.TryGetValue("newdatabaseversion", out string? value) ? value.Trim() : null;
+
+    /// <summary>raw upstream remap value: orig|new&amp;orig2|new2 (null = no remap)</summary>
+    public string? Remap
+        => _values.TryGetValue("remap", out string? value) && value.Trim().Length > 0 ? value.Trim() : null;
+
+    /// <summary>
+    /// Upstream <c>skipIndexes</c>: skips simple (non-constraint) indexes when
+    /// building the mirror. The SQLite mirror currently carries no secondary
+    /// indexes, so this is accepted for compatibility and has no effect on file
+    /// data or referential integrity (default false).
+    /// </summary>
+    public bool SkipIndexes
+        => GetBoolean("skipindexes", defaultValue: false);
+
+    /// <summary>
+    /// Upstream <c>openExclusive</c> (legacy <c>lockMdb</c>): lock the Access file
+    /// even for read-only opens, failing when another process holds the lock
+    /// (default false; writable opens always lock).
+    /// </summary>
+    public bool OpenExclusive
+        => GetBoolean("openexclusive", defaultValue: false);
+
+    /// <summary>
+    /// Upstream <c>ignoreCase</c>: case-insensitive text comparison
+    /// (default true, matches HSQLDB SQL_TEXT_UCC).
+    /// </summary>
+    public bool IgnoreCase
+        => GetBoolean("ignorecase", defaultValue: true);
+
+    /// <summary>
+    /// Upstream <c>concatNulls</c>: when true, <c>&amp;</c>/<c>||</c> with NULL
+    /// yields NULL (pre-3.0 behavior). Default false maps NULL to ''.
+    /// </summary>
+    public bool ConcatNulls
+        => GetBoolean("concatnulls", defaultValue: false);
+
+    /// <summary>parsed trusted remap map (original -&gt; new path, case-insensitive).</summary>
+    public IReadOnlyDictionary<string, string> LinkRemap => ParseRemap(Remap);
+
+    /// <summary>
+    /// Parses the upstream remap syntax: pairs separated by '&amp;', original and
+    /// new path separated by '|'. Empty value yields an empty map.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ParseRemap(string? raw)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return map;
+        }
+        foreach (string pair in raw.Split('&'))
+        {
+            if (string.IsNullOrWhiteSpace(pair))
+            {
+                continue;
+            }
+            int sep = pair.IndexOf('|');
+            if (sep < 0)
+            {
+                throw new ArgumentException($"Invalid Remap entry '{pair}'. Expected 'original|new'.");
+            }
+            string original = pair[..sep].Trim();
+            string target = pair[(sep + 1)..].Trim();
+            if (original.Length == 0 || target.Length == 0)
+            {
+                throw new ArgumentException($"Invalid Remap entry '{pair}'. Expected 'original|new'.");
+            }
+            map[original] = target;
+        }
+        return map;
+    }
 
     public System.Text.Encoding? ResolveEncoding()
     {

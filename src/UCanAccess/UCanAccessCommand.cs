@@ -83,7 +83,7 @@ public sealed class UCanAccessCommand : DbCommand
         File.Database queryDatabase = transaction?.QueryDatabase ?? connection.AccessDatabase;
         string effectiveCommandText = SavedQueryExpander.Expand(CommandText, queryDatabase);
         AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount == 0 && _parameters.Count != 0)
         {
             throw new InvalidOperationException("The command has parameters, but its SQL contains no placeholders.");
@@ -545,7 +545,7 @@ public sealed class UCanAccessCommand : DbCommand
         {
             string translatedValueQuery = AccessSqlTranslator.Translate(valueQuery,
                 out int valueParameterCount, out IReadOnlyList<string>? valueNames,
-                queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn);
+                queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn, queryMirror.ConcatNulls);
             object?[]? valueParameters = BindQueryParameters(valueParameterCount, valueNames, suppliedParameters);
             var pivotValues = new List<object?>();
             using (MirrorReader valueReader = queryMirror.ExecuteReader(translatedValueQuery, valueParameters,
@@ -563,7 +563,7 @@ public sealed class UCanAccessCommand : DbCommand
         }
 
         string sql = AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
-            queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn);
+            queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn, queryMirror.ConcatNulls);
         object?[]? parameters = null;
         if (parameterCount > 0)
         {

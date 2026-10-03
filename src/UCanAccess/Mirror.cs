@@ -49,12 +49,19 @@ public sealed class Mirror : IDisposable
     /// Creates the mirror: builds the SQLite schema from the Access schema and loads all data.
     /// </summary>
     /// <param name="displayOrder">order columns by their Access display order instead of natural file order</param>
+    /// <param name="skipSimpleIndexes">upstream skipIndexes: skip simple non-constraint indexes (mirror carries none; accepted for compatibility)</param>
+    /// <param name="ignoreCase">upstream ignoreCase: case-insensitive text comparison (default true)</param>
+    /// <param name="concatNulls">upstream concatNulls: NULL &amp; 'x' yields NULL when true (default false maps NULL to '')</param>
     public Mirror(File.Database accessDb, bool includeSystem = false, bool displayOrder = false,
-        bool buildSavedQueries = true, string? storagePath = null, bool deleteStorageOnDispose = false)
+        bool buildSavedQueries = true, string? storagePath = null, bool deleteStorageOnDispose = false,
+        bool skipSimpleIndexes = false, bool ignoreCase = true, bool concatNulls = false)
     {
         _accessDb = accessDb;
         _includeSystem = includeSystem;
         _displayOrder = displayOrder;
+        SkipSimpleIndexes = skipSimpleIndexes;
+        IgnoreCase = ignoreCase;
+        ConcatNulls = concatNulls;
         _storagePath = storagePath;
         _deleteStorageOnDispose = deleteStorageOnDispose;
         // The Access domain functions (DCount/DLookup/...) run their own
@@ -98,6 +105,15 @@ public sealed class Mirror : IDisposable
     }
 
     public SqliteConnection Connection => _connection;
+
+    /// <summary>whether simple non-constraint indexes were skipped (upstream skipIndexes).</summary>
+    public bool SkipSimpleIndexes { get; }
+
+    /// <summary>whether text comparison is case-insensitive (upstream ignoreCase).</summary>
+    public bool IgnoreCase { get; }
+
+    /// <summary>whether &amp;/|| with NULL yields NULL (upstream concatNulls).</summary>
+    public bool ConcatNulls { get; }
 
     /// <summary>the mirrored (non-system, non-linked) table names</summary>
     public IReadOnlyCollection<string> TableNames => _tableNames.Keys;
@@ -254,7 +270,7 @@ public sealed class Mirror : IDisposable
                 if (CrosstabTranslator.TryBuildDynamicValueQuery(querySql, out string valueQuery))
                 {
                     string translatedValues = AccessSqlTranslator.Translate(valueQuery,
-                        out int valueParameterCount, out _, IsMoneyColumn, IsExactDecimalColumn, IsDateColumn);
+                        out int valueParameterCount, out _, IsMoneyColumn, IsExactDecimalColumn, IsDateColumn, ConcatNulls);
                     if (valueParameterCount != 0)
                     {
                         throw new NotSupportedException(
@@ -276,7 +292,7 @@ public sealed class Mirror : IDisposable
                     querySql = CrosstabTranslator.AddPivotValues(querySql, values);
                 }
                 string translated = AccessSqlTranslator.Translate(querySql, out _, out _, IsMoneyColumn,
-                    IsExactDecimalColumn, IsDateColumn);
+                    IsExactDecimalColumn, IsDateColumn, ConcatNulls);
                 using var cmd = _connection.CreateCommand();
                 cmd.CommandText = $"CREATE VIEW {SqlNames.Quote(query.Name)} AS {translated}";
                 cmd.ExecuteNonQuery();
@@ -338,7 +354,7 @@ public sealed class Mirror : IDisposable
 
     private const string CaseInsensitiveCollation = "UCA_IGNORE_CASE";
 
-    private static string SqliteType(Column column) => column.Type switch
+    private string SqliteType(Column column) => column.Type switch
     {
         DataType.Boolean => "INTEGER",
         DataType.Byte => "INTEGER",
@@ -354,7 +370,9 @@ public sealed class Mirror : IDisposable
         DataType.Numeric => $"TEXT COLLATE {ExactDecimalSql.CollationName}",
         DataType.ShortDateTime => "TEXT",
         DataType.ExtDateTime => "TEXT",
-        DataType.Text or DataType.Memo => $"TEXT COLLATE {CaseInsensitiveCollation}",
+        DataType.Text or DataType.Memo => IgnoreCase
+            ? $"TEXT COLLATE {CaseInsensitiveCollation}"
+            : "TEXT COLLATE BINARY",
         DataType.Guid => "TEXT",
         DataType.ComplexType => "TEXT",
         _ => "BLOB",

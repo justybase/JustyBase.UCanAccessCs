@@ -22,6 +22,8 @@ public sealed class AccessCryptoOpener : IAccessDatabaseOpener
             request.Encoding,
             request.ReadOnly,
             request.AllowExternalLinks,
-            new AccessCryptoPageCodecFactory(request.Password ?? string.Empty));
+            new AccessCryptoPageCodecFactory(request.Password ?? string.Empty),
+            request.LinkRemap,
+            request.OpenExclusive);
     }
 }

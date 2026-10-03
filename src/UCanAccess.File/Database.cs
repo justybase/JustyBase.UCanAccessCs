@@ -66,6 +66,8 @@ public sealed class Database : IDisposable
     private readonly JetFormat _format;
     private readonly bool _isReadOnly;
     private readonly bool _allowExternalLinks;
+    private readonly bool _openExclusive;
+    private readonly Dictionary<string, string> _linkRemap;
     private readonly Table _systemCatalog;
     private readonly int _tableParentId;
     private readonly List<TableMetaData> _tableInfos = new();
@@ -85,6 +87,9 @@ public sealed class Database : IDisposable
         set => _enforceForeignKeys = value;
     }
 
+    /// <summary>whether this handle holds an exclusive lock (upstream openExclusive).</summary>
+    public bool OpenExclusive => _openExclusive || !_isReadOnly;
+
     /// <summary>
     /// Whether the given table accepts explicit AutoNumber values on INSERT
     /// (the DISABLE AUTOINCREMENT ON statement).  In-memory state only, mirroring
@@ -99,11 +104,24 @@ public sealed class Database : IDisposable
     internal IReadOnlyDictionary<string, bool> GetAllowAutoNumberInsertFlags() => _allowAutoNumberInsert;
 
     private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly,
-        bool allowExternalLinks, IAccessPageCodec? codec = null)
+        bool allowExternalLinks, IAccessPageCodec? codec = null,
+        IReadOnlyDictionary<string, string>? linkRemap = null, bool openExclusive = false)
     {
         _stream = stream;
         _isReadOnly = readOnly;
         _allowExternalLinks = allowExternalLinks;
+        _openExclusive = openExclusive;
+        _linkRemap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (linkRemap != null)
+        {
+            foreach ((string k, string v) in linkRemap)
+            {
+                if (k.Length > 0)
+                {
+                    _linkRemap[k] = v;
+                }
+            }
+        }
         _format = JetFormat.GetFormat(ReadHeader(stream));
 
         _pageChannel = new PageChannel(stream, _format, closeChannel, codec);
@@ -165,7 +183,8 @@ public sealed class Database : IDisposable
     /// <param name="path">path of the new .mdb/.accdb file (created/truncated)</param>
     /// <param name="encoding">optional text encoding override</param>
     /// <param name="version">"2000", "2002" or "2003" (Jet 4 .mdb, default), or "2007", "2010" or "2016" (.accdb)</param>
-    public static Database Create(string path, Encoding? encoding = null, string version = "2003", bool allowExternalLinks = false)
+    public static Database Create(string path, Encoding? encoding = null, string version = "2003", bool allowExternalLinks = false,
+        IReadOnlyDictionary<string, string>? linkRemap = null)
     {
         string normalizedVersion = version.Trim();
         string templateName = normalizedVersion.ToUpperInvariant() switch
@@ -185,7 +204,7 @@ public sealed class Database : IDisposable
             template.CopyTo(fs);
             fs.Flush();
             fs.Position = 0;
-            var db = new Database(fs, true, encoding, false, allowExternalLinks); db._path = path;
+            var db = new Database(fs, true, encoding, false, allowExternalLinks, null, linkRemap); db._path = path;
             db.AcquireLock();
             ok = true;
             return db;
@@ -206,14 +225,18 @@ public sealed class Database : IDisposable
     /// <param name="encoding">optional text encoding override (only relevant for Jet 3 databases)</param>
     /// <param name="readOnly">whether to open without write intent (default true)</param>
     /// <param name="codecFactory">optional page codec factory for an encrypted file</param>
+    /// <param name="linkRemap">optional original-path to new-path remap for linked databases (upstream remap)</param>
+    /// <param name="openExclusive">lock the file even for read-only opens (upstream openExclusive/lockMdb)</param>
     public static Database Open(string path, Encoding? encoding = null, bool readOnly = true,
-        bool allowExternalLinks = false, IAccessPageCodecFactory? codecFactory = null)
+        bool allowExternalLinks = false, IAccessPageCodecFactory? codecFactory = null,
+        IReadOnlyDictionary<string, string>? linkRemap = null, bool openExclusive = false)
     {
         if (readOnly)
         {
             var roStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1, FileOptions.RandomAccess);
             bool success = false;
             IAccessPageCodec? codec = null;
+            Database? db = null;
             try
             {
                 JetFormat format = JetFormat.GetFormat(ReadHeader(roStream));
@@ -223,7 +246,12 @@ public sealed class Database : IDisposable
                     codec = codecFactory.Create(new AccessPageCodecContext(
                         path, format, true, root));
                 }
-                var db = new Database(roStream, true, encoding, true, allowExternalLinks, codec); db._path = path;
+                db = new Database(roStream, true, encoding, true, allowExternalLinks, codec, linkRemap, openExclusive);
+                db._path = path;
+                if (openExclusive)
+                {
+                    db.AcquireLock();
+                }
                 success = true;
                 return db;
             }
@@ -231,8 +259,17 @@ public sealed class Database : IDisposable
             {
                 if (!success)
                 {
-                    codec?.Dispose();
-                    roStream.Dispose();
+                    if (db != null)
+                    {
+                        // Database owns roStream via PageChannel (closeChannel=true).
+                        db.Dispose();
+                        codec?.Dispose();
+                    }
+                    else
+                    {
+                        codec?.Dispose();
+                        roStream.Dispose();
+                    }
                 }
             }
         }
@@ -254,7 +291,7 @@ public sealed class Database : IDisposable
                 codecForWrite = codecFactory.Create(new AccessPageCodecContext(
                     path, format, false, root));
             }
-            var db = new Database(rwStream, true, encoding, false, allowExternalLinks, codecForWrite); db._path = path;
+            var db = new Database(rwStream, true, encoding, false, allowExternalLinks, codecForWrite, linkRemap, openExclusive); db._path = path;
             db.AcquireLock();
             ok = true;
             return db;
@@ -441,7 +478,8 @@ public sealed class Database : IDisposable
             }
             if (!_linkedDatabaseByPath.TryGetValue(linkeePath, out Database? linkeeDb))
             {
-                linkeeDb = Open(linkeePath, null, readOnly: _isReadOnly, allowExternalLinks: _allowExternalLinks);
+                linkeeDb = Open(linkeePath, null, readOnly: _isReadOnly, allowExternalLinks: _allowExternalLinks,
+                    codecFactory: null, linkRemap: _linkRemap, openExclusive: _openExclusive);
                 _linkedDatabaseByPath[linkeePath] = linkeeDb;
             }
             return linkeeDb.GetTable(info.LinkedTableName);
@@ -454,6 +492,43 @@ public sealed class Database : IDisposable
         string baseDirectory = _path is { Length: > 0 }
             ? System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_path)) ?? Environment.CurrentDirectory
             : Environment.CurrentDirectory;
+        // Upstream remap (trusted explicit config): original -> new path.
+        // Matches the raw stored value first, then the fully resolved path,
+        // so both relative and absolute original spellings work.
+        if (_linkRemap.Count > 0)
+        {
+            if (_linkRemap.TryGetValue(linkedDbName, out string? remapped))
+            {
+                string remapCandidate = System.IO.Path.IsPathRooted(remapped)
+                    ? remapped
+                    : System.IO.Path.Combine(baseDirectory, remapped);
+                return System.IO.Path.GetFullPath(remapCandidate);
+            }
+            string defaultFull = System.IO.Path.GetFullPath(System.IO.Path.IsPathRooted(linkedDbName)
+                ? linkedDbName
+                : System.IO.Path.Combine(baseDirectory, linkedDbName));
+            foreach ((string original, string target) in _linkRemap)
+            {
+                string originalFull;
+                try
+                {
+                    originalFull = System.IO.Path.GetFullPath(System.IO.Path.IsPathRooted(original)
+                        ? original
+                        : System.IO.Path.Combine(baseDirectory, original));
+                }
+                catch
+                {
+                    continue;
+                }
+                if (string.Equals(originalFull, defaultFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    string remapCandidate = System.IO.Path.IsPathRooted(target)
+                        ? target
+                        : System.IO.Path.Combine(baseDirectory, target);
+                    return System.IO.Path.GetFullPath(remapCandidate);
+                }
+            }
+        }
         string candidate = System.IO.Path.IsPathRooted(linkedDbName)
             ? linkedDbName
             : System.IO.Path.Combine(baseDirectory, linkedDbName);

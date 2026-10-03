@@ -234,7 +234,7 @@ public static class AccessDml
     {
         string selectSql = RebuildSql(tokens, selectStart);
         string translated = AccessSqlTranslator.Translate(selectSql, out int pcount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         IReadOnlyList<object?>? selectParams = pcount > 0 ? parameters : null;
         using var reader = mirror.ExecuteReader(translated, selectParams);
         int affected = 0;
@@ -275,7 +275,7 @@ public static class AccessDml
             + $" FROM {fromClause}"
             + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount != (parameters?.Count ?? 0))
         {
             throw new InvalidOperationException(
@@ -344,7 +344,7 @@ public static class AccessDml
         string selectSql = $"SELECT DISTINCT {targetReference}.rowid FROM {fromClause}"
             + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount != (parameters?.Count ?? 0))
         {
             throw new InvalidOperationException(
@@ -531,7 +531,7 @@ public static class AccessDml
             + $" FROM {fromClause}"
             + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount != (parameters?.Count ?? 0))
         {
             throw new InvalidOperationException(
@@ -597,7 +597,7 @@ public static class AccessDml
         string selectSql = $"SELECT {targetReference}.rowid FROM {fromClause}"
             + (whereIndex < 0 ? string.Empty : " " + RebuildSql(tokens, whereIndex, tokens.Count));
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount != (parameters?.Count ?? 0))
         {
             throw new InvalidOperationException(

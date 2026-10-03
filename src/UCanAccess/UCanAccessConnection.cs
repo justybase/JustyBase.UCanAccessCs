@@ -124,9 +124,13 @@ public sealed class UCanAccessConnection : DbConnection
         string? mirrorPath = useConfiguredStorage ? ResolveMirrorPath(database) : null;
         var mirror = new Mirror(database, _connStr?.ShowSchema ?? false, displayOrder,
             buildSavedQueries: false, storagePath: mirrorPath,
-            deleteStorageOnDispose: mirrorPath != null && _connStr?.MirrorPath == null);
+            deleteStorageOnDispose: mirrorPath != null && _connStr?.MirrorPath == null,
+            skipSimpleIndexes: _connStr?.SkipIndexes ?? false,
+            ignoreCase: _connStr?.IgnoreCase ?? true,
+            concatNulls: _connStr?.ConcatNulls ?? false);
         AccessFunctions.Register(mirror.Connection,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn,
+            mirror.IgnoreCase);
         foreach (RegisteredFunction registration in _customFunctions)
         {
             AccessFunctions.RegisterFunction(mirror.Connection, registration.Name, registration.Arity,
@@ -199,15 +203,21 @@ public sealed class UCanAccessConnection : DbConnection
             throw new NotSupportedException(
                 "Password-protected/encrypted Access files require an IAccessDatabaseOpener codec adapter.");
         }
+        IReadOnlyDictionary<string, string>? remap = _connStr?.LinkRemap;
+        if (remap != null && remap.Count == 0)
+        {
+            remap = null;
+        }
+        bool openExclusive = _connStr?.OpenExclusive ?? false;
         if (_databaseOpener != null)
         {
             database = _databaseOpener.Open(new AccessDatabaseOpenRequest(path, readOnly,
-                _connStr?.ResolveEncoding(), _connStr?.AllowExternalLinks ?? false, password));
+                _connStr?.ResolveEncoding(), _connStr?.AllowExternalLinks ?? false, password, remap, openExclusive));
         }
         else
         {
             database = File.Database.Open(path, _connStr?.ResolveEncoding(), readOnly,
-                _connStr?.AllowExternalLinks ?? false);
+                _connStr?.AllowExternalLinks ?? false, null, remap, openExclusive);
         }
         foreach ((string tableName, bool allowed) in _autoNumberFlags)
         {
@@ -349,8 +359,13 @@ public sealed class UCanAccessConnection : DbConnection
                 && _connStr.NewDatabaseVersion != null)
             {
                 // create a fresh database of the requested version when the target is missing
+                IReadOnlyDictionary<string, string>? createRemap = _connStr.LinkRemap;
+                if (createRemap.Count == 0)
+                {
+                    createRemap = null;
+                }
                 _database = File.Database.Create(_connStr.DataSource, _connStr.ResolveEncoding(), _connStr.NewDatabaseVersion,
-                    _connStr.AllowExternalLinks);
+                    _connStr.AllowExternalLinks, createRemap);
             }
             else
             {

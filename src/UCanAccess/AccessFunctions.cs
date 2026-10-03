@@ -24,13 +24,15 @@ public static class AccessFunctions
     public static void Register(SqliteConnection connection,
         Func<string, bool>? isMoneyColumn = null,
         Func<string, bool>? isExactDecimalColumn = null,
-        Func<string, bool>? isDateColumn = null)
-        => RegisterCore(connection, isMoneyColumn, isExactDecimalColumn, isDateColumn);
+        Func<string, bool>? isDateColumn = null,
+        bool ignoreCase = true)
+        => RegisterCore(connection, isMoneyColumn, isExactDecimalColumn, isDateColumn, ignoreCase);
 
     private static void RegisterCore(SqliteConnection connection,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
-        Func<string, bool>? isDateColumn)
+        Func<string, bool>? isDateColumn,
+        bool ignoreCase = true)
     {
         // Access MONEY/NUMERIC values are mirrored as invariant decimal text.
         // Register the exact operators on the query connection; the domain
@@ -49,7 +51,7 @@ public static class AccessFunctions
         RegisterVar(connection, "access_like", a => a.Length < 2
             || a[0] is null or DBNull || a[1] is null or DBNull
             ? null
-            : AccessLikePattern(AsString(a[0])!, AsString(a[1])!), true);
+            : AccessLikePattern(AsString(a[0])!, AsString(a[1])!, ignoreCase), true);
 
         // null handling / boolean
         RegisterVar(connection, "nz", a => Nz(a[0], a.Length > 1 ? a[1] : ""));
@@ -1182,7 +1184,7 @@ public static class AccessFunctions
     // Access LIKE
     // ------------------------------------------------------------------
 
-    internal static bool AccessLikePattern(string? value, string? pattern)
+    internal static bool AccessLikePattern(string? value, string? pattern, bool ignoreCase = true)
     {
         if (pattern == null)
         {
@@ -1193,7 +1195,8 @@ public static class AccessFunctions
             return false;
         }
         string regex = ConvertLikePattern(pattern);
-        return Regex.IsMatch(value, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        RegexOptions options = RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+        return Regex.IsMatch(value, regex, options);
     }
 
     private static string ConvertLikePattern(string pattern)

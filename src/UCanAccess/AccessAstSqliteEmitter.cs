@@ -26,7 +26,8 @@ internal static class AccessAstSqliteEmitter
         out IReadOnlyList<string>? namedParameters,
         Func<string, bool>? isMoneyColumn,
         Func<string, bool>? isExactDecimalColumn,
-        Func<string, bool>? isDateColumn)
+        Func<string, bool>? isDateColumn,
+        bool concatNulls = false)
     {
         translated = string.Empty;
         parameterCount = 0;
@@ -46,7 +47,8 @@ internal static class AccessAstSqliteEmitter
             out namedParameters,
             isMoneyColumn,
             isExactDecimalColumn,
-            isDateColumn);
+            isDateColumn,
+            concatNulls);
         return true;
     }
 

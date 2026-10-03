@@ -472,7 +472,7 @@ public static class AccessDdl
 
         string selectSql = RebuildSql(tokens, selectStart, selectEnd);
         string translated = AccessSqlTranslator.Translate(selectSql, out int parameterCount, out _,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn);
+            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
         if (parameterCount != 0)
         {
             throw new NotSupportedException("CREATE TABLE ... AS SELECT does not support parameters.");
