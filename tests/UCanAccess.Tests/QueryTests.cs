@@ -188,6 +188,165 @@ public class QueryTests
     }
 
     [Fact]
+    public void Managed_view_with_inner_join_round_trips()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-join-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using (var create = conn.CreateCommand())
+            {
+                create.CommandText = "CREATE VIEW q_join AS SELECT m.name, d.qty FROM t_master m INNER JOIN t_detail d ON d.master_id = m.id";
+                create.ExecuteNonQuery();
+            }
+            using var command = conn.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM q_join";
+            Assert.True(Convert.ToInt64(command.ExecuteScalar()) > 0);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_with_left_join_round_trips()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-leftjoin-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using (var create = conn.CreateCommand())
+            {
+                create.CommandText = "CREATE VIEW q_left AS SELECT m.name FROM t_master m LEFT JOIN t_detail d ON d.master_id = m.id";
+                create.ExecuteNonQuery();
+            }
+            using var command = conn.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM q_left";
+            Assert.True(Convert.ToInt64(command.ExecuteScalar()) > 0);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_full_join()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-fulljoin-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_full AS SELECT m.name FROM t_master m FULL JOIN t_detail d ON d.master_id = m.id";
+            var ex = Assert.Throws<NotSupportedException>(() => create.ExecuteNonQuery());
+            Assert.Contains("FULL JOIN", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_comma_join_mix()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-mix-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_mix AS SELECT m.name FROM t_master m, t_detail d INNER JOIN t_detail e ON e.master_id = m.id";
+            var ex = Assert.Throws<NotSupportedException>(() => create.ExecuteNonQuery());
+            Assert.Contains("comma", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_join_without_on()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-noon-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_noon AS SELECT m.name FROM t_master m INNER JOIN t_detail d";
+            var ex = Assert.Throws<NotSupportedException>(() => create.ExecuteNonQuery());
+            Assert.Contains("ON", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_unterminated_parameters()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-noparam-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "accessLike.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_noparam AS PARAMETERS p TEXT(20) SELECT Campo2 FROM t_like2";
+            var ex = Assert.Throws<NotSupportedException>(() => create.ExecuteNonQuery());
+            Assert.Contains("terminated", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_unsupported_parameter_type()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-badparam-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "accessLike.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_badparam AS PARAMETERS p COMPLEX; SELECT Campo2 FROM t_like2";
+            Assert.ThrowsAny<Exception>(() => create.ExecuteNonQuery());
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Managed_view_rejects_top_percent()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-query-topct-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "sqljoin.mdb"), path, true);
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var create = conn.CreateCommand();
+            create.CommandText = "CREATE VIEW q_topct AS SELECT TOP 10 PERCENT name FROM t_master";
+            var ex = Assert.Throws<NotSupportedException>(() => create.ExecuteNonQuery());
+            Assert.Contains("PERCENT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Transaction_querydef_snapshot_is_used_for_parameterized_reads()
     {
         string path = Path.Combine(Path.GetTempPath(), $"uca-query-param-tx-{Guid.NewGuid():N}.mdb");
