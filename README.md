@@ -87,6 +87,11 @@ foreach (string name in database.GetTableNames())
 | `Mirror Path` | path | Explicit SQLite path for `Mirror Mode=file`. |
 | `Mirror Folder` | path | Folder for an automatically named file mirror. |
 | `Allow External Links` | | Required to open external link targets. |
+| `Remap` | `orig|new&...` | Upstream linked-db remap (trusted explicit config, bypasses the external-links guard). |
+| `Skip Indexes` | `true`/`false` | Upstream alias; accepted, mirror carries no secondary indexes. |
+| `Open Exclusive` / `Lock Mdb` | `true`/`false` | Locks even read-only opens; writable opens always lock. |
+| `Ignore Case` | `true` (default) / `false` | Case-insensitive text/`LIKE`; `false` is binary. |
+| `Concat Nulls` | `true`/`false` (default) | `&`/`||` NULL propagation; default maps NULL to `''`. |
 | `New Database Version` | `2000` / `2002` / `2003` / `2007` / `2010` / `2016` | For `Database.Create`. |
 | `Time Zone`, `Prefer Date Timestamp` | | Accepted for compatibility; Access stores dates without timezone metadata and the provider exposes them as `DateTime`. |
 | `Password` / `PWD` | | Passed to an application-supplied `IAccessDatabaseOpener`; masked when the connection string is displayed. The optional `JustyBase.UCanAccess.AccessCrypto` package supplies a pure-.NET opener for modern encrypted `.accdb` files. |
@@ -142,8 +147,9 @@ operation.
 |---|---|
 | [Getting started](docs/GETTING_STARTED.md) | Writes, transactions, savepoints, user-defined functions, low-level API. |
 | [Compatibility matrix](docs/COMPATIBILITY_MATRIX.md) | The ADO.NET behavior contract, feature by feature. |
-| [Parity baseline](docs/PARITY_BASELINE_UCANACCESS_5_1_6.md) | Pinned Java UCanAccess 5.1.6 reference and oracle-refresh rules. |
+| [Parity baseline](docs/PARITY_BASELINE_UCANACCESS_5_1_7.md) | Pinned Java UCanAccess 5.1.7 reference and oracle-refresh rules. |
 | [SQL compatibility](docs/SQL_COMPATIBILITY.md) | Supported Access SQL syntax and translation. |
+| [Function catalog](docs/FUNCTION_CATALOG.md) | Java-vs-.NET Access/VBA function parity. |
 | [Coverage](docs/COVERAGE.md) | Test coverage baselines and CI collection contract. |
 | [Performance](docs/PERFORMANCE.md) | Opt-in C#/Jackcess benchmark and profiling boundaries. |
 | [Security policy](SECURITY.md) | Supported versions and private vulnerability reporting. |
@@ -178,7 +184,7 @@ dotnet test UCanAccess.slnx
 ```
 
 The suite contains file-layer differential tests, SQL parity tests against
-UCanAccess 5.1.6, window-function tests executed by the SQLite mirror, DDL
+UCanAccess 5.1.7, window-function tests executed by the SQLite mirror, DDL
 checks, write-path tests, and ADO.NET tests. Java-backed tests are skipped
 explicitly when a compatible Java runtime or the downloaded oracle jars are not
 available. Any JDK distribution version 11 or newer is supported; the oracle

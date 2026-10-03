@@ -56,6 +56,16 @@ jobs:
       - name: Test pure .NET Access encryption codec
         run: dotnet test tests/UCanAccess.AccessCrypto.Tests/UCanAccess.AccessCrypto.Tests.csproj -c Release --no-build --no-restore
 
+      - name: Console smoke test
+        shell: pwsh
+        run: |
+          dotnet run --project src/UCanAccess.Console/UCanAccess.Console.csproj -c Release --no-build -- --help
+          dotnet run --project src/UCanAccess.Console/UCanAccess.Console.csproj -c Release --no-build -- tests/fixtures/sqljoin.mdb --schema --indexes
+
+      - name: Coverage gate (72% line-rate floor)
+        shell: pwsh
+        run: pwsh tools/CheckCoverage.ps1 -ResultsDir TestResults -MinimumLineRate 0.72
+
       # Packaging smoke test only.  Release publication remains a separate,
       # explicit workflow and is intentionally not performed by CI.
       - name: Pack and inspect local NuGet artifacts

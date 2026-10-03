@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+- Unified the build: `TreatWarningsAsErrors=true` locally and in CI,
+  `EnableNETAnalyzers=true`, single `JustyBaseParserVersion` 0.8.7 consumed via
+  `$(JustyBaseParserVersion)`, plus repo `.editorconfig`/`global.json` (S1).
+- Pinned the Java oracle to UCanAccess 5.1.7 (Jackcess 5.1.5/HSQLDB 2.7.4
+  unchanged); `run.ps1` regeneration is byte-identical for the committed
+  fixtures, so the 5.1.7 baseline is adopted without oracle drift (S4).
 - Prepare the provider package 1.0.3 for the published
-  `JustyBase.NetezzaSqlParser` 0.8.2 Access AST contract.
+  `JustyBase.NetezzaSqlParser` 0.8.7 Access AST contract.
 
-- Aligned the provider with `JustyBase.NetezzaSqlParser` 0.8.2 and added
+- Aligned the provider with `JustyBase.NetezzaSqlParser` 0.8.7 and added
   package-level Access parser contract tests plus a parity-tested AST
   normalization bridge for a small SELECT/TOP/DISTINCTROW/crosstab subset. The
   parser remains the shared lexer/syntax dependency; SQLite translation and
@@ -21,11 +27,11 @@
   through stream-based readers.
 - Added SQL-corpus parity coverage for qualified `table.*` projections
   (`SELECT t_detail.*`, alias-qualified `d.*` in joins, and bracketed
-  `[t_detail].*`) against Java UCanAccess 5.1.6.
+  `[t_detail].*`) against Java UCanAccess 5.1.7.
 - Added Access `DELETE * FROM <table>` statements (the Access wildcard
-  projection), with file-state parity against Java UCanAccess 5.1.6.
+  projection), with file-state parity against Java UCanAccess 5.1.7.
 - Added Access `DISABLE/ENABLE AUTOINCREMENT ON <table>` statements with
-  Java UCanAccess 5.1.6 parity: explicit AutoNumber values are honored only
+  Java UCanAccess 5.1.7 parity: explicit AutoNumber values are honored only
   while autoincrement is disabled, and `ENABLE` resumes at max+1. The flag is
   per-connection in-memory state, like the upstream implementation. Known
   divergences: a NULL AutoNumber insert while disabled raises a clean
@@ -38,6 +44,48 @@
 - Added upstream-compatible connection-string aliases for persistent
   `keepMirror=<path>`, `memory`, `immediatelyReleaseResources`/
   `singleConnection`, `preventReloading`, and `sysSchema`.
+- Added upstream-compatible `Remap=orig|new&...` for linked databases
+  (trusted explicit config, bypasses the external-links guard), with file and
+  provider tests plus matrix/README coverage.
+- Added upstream `Skip Indexes` (accepted, mirror carries no secondary indexes)
+  and `Open Exclusive`/`Lock Mdb` (locks even read-only opens) with
+  `ConnectionOptionsTests` and matrix/README coverage.
+- Added upstream `Ignore Case` (default true, binary when false) and
+  `Concat Nulls` (default false maps NULL to '', true propagates NULL for
+  `&`/`||`) with translator/mirror/`LIKE` support and `TextSemanticsTests`.
+- Added upstream complex-type filters `Equals`, `EqualsIgnoreOrder` and
+  `Contains` over the JSON mirror with complex-array parameter support and
+  `ComplexTypeProviderTests` coverage.
+- Added `docs/FUNCTION_CATALOG.md` Java-vs-.NET parity catalog, input-only
+  output/return-parameter contract tests, `GetSchema` restriction/column-default
+  coverage, and fixed `ForeignKeys` restriction mapping (constraint name at
+  index 2, FK table at index 5).
+- Added CI coverage gate (`tools/CheckCoverage.ps1`, 70% line-rate floor) and
+  `UCanAccess.Console` smoke test (`--help`, `--schema --indexes`).
+- Added a parameterized SQL parity corpus: 12 `?` statements in `sqljoin.sql`
+  with `sqljoin.params.json` bindings executed via Java `PreparedStatement`
+  (`SqlDump` 4th argument, `run.ps1` passes it when present) and ADO.NET
+  `DbParameter` on the port side; fixed `?` numbering inside `&`/`||` concat
+  operands found by the new corpus.
+- Added `DdlParityTests.Update_delete_sequence_produces_same_file_state_as_java`
+  (INSERT/UPDATE/DELETE with concat, subquery and `DELETE *` against Java 5.1.7).
+- Added window-function parity coverage (ranking/value assertions, frame-edge
+  NULLs, DESC NULL-first, non-SELECT rejection) and documented the
+  expression-column `GetFieldType` fallback.
+- Added absolute-value financial alias checks
+  (`FunctionsTests.Java_financial_function_aliases`: FV/PV/NPER/IPMT/PPMT/DDB/
+  NPV/MIRR/RATE) and decided the `MT` catalog entry (docs typo for `MIRR`,
+  verified against Java `Functions.java`; stays unimplemented by design).
+- Added attachment-metadata round-trip coverage (file and provider layers) and
+  raised the CI coverage floor to 72% (local baselines: File 76.25%,
+  Provider 74.56%).
+- Added ALTER-boundary tests (relationship/calculated tables, `ADD CONSTRAINT
+  UNIQUE`), shared-index DDL boundary, QueryDef grammar boundaries
+  (INNER/LEFT JOIN round-trip; FULL JOIN, comma/JOIN mix, missing ON,
+  unterminated PARAMETERS, bad param type, TOP PERCENT rejected), crosstab
+  aggregate/grammar boundaries and parameterized inline-dynamic pivot coverage,
+  `CREATE TABLE` Access type aliases, and a DDL-created FK `GetSchema`
+  round-trip test.
 - Added the optional `JustyBase.UCanAccess.AccessCrypto` package with a pure
   .NET Agile-encryption page codec for Access 2010+ `.accdb` files, including
   opt-in Access COM round-trip fixtures and tests.
