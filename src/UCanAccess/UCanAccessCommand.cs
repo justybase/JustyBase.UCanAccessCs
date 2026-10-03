@@ -10,8 +10,19 @@ namespace UCanAccess;
 /// <summary>
 /// ADO.NET command for MS Access databases.
 /// </summary>
-public sealed class UCanAccessCommand : DbCommand
+public sealed partial class UCanAccessCommand : DbCommand
 {
+    [GeneratedRegex(@"^\s*CREATE\s+VIEW\b.*\bAS\s+PARAMETERS\b",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant)]
+    private static partial Regex QueryDefParameterTerminatorRegex();
+
+    [GeneratedRegex(@"^SELECT\s+@@IDENTITY(?=\s|$)(?<tail>.*)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex IdentitySelectRegex();
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_$#@]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex IdentityAliasRegex();
+
     private UCanAccessConnection? _connection;
     private string _commandText = string.Empty;
     private CommandType _commandType = CommandType.Text;
@@ -82,8 +93,7 @@ public sealed class UCanAccessCommand : DbCommand
         Mirror mirror = transaction?.QueryMirror ?? connection.Mirror;
         File.Database queryDatabase = transaction?.QueryDatabase ?? connection.AccessDatabase;
         string effectiveCommandText = SavedQueryExpander.Expand(CommandText, queryDatabase);
-        AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
-            mirror.IsMoneyColumn, mirror.IsExactDecimalColumn, mirror.IsDateColumn, mirror.ConcatNulls);
+        mirror.TranslateQuery(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names);
         if (parameterCount == 0 && _parameters.Count != 0)
         {
             throw new InvalidOperationException("The command has parameters, but its SQL contains no placeholders.");
@@ -487,10 +497,7 @@ public sealed class UCanAccessCommand : DbCommand
     private static bool IsQueryDefParameterTerminator(StringBuilder statement)
     {
         string text = statement.ToString();
-        return !text.Contains(';')
-            && Regex.IsMatch(text,
-                @"^\s*CREATE\s+VIEW\b.*\bAS\s+PARAMETERS\b",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        return !text.Contains(';') && QueryDefParameterTerminatorRegex().IsMatch(text);
     }
 
     public override object? ExecuteScalar()
@@ -543,9 +550,8 @@ public sealed class UCanAccessCommand : DbCommand
         var suppliedParameters = _parameters.Cast<UCanAccessParameter>().ToList();
         if (CrosstabTranslator.TryBuildDynamicValueQuery(effectiveCommandText, out string valueQuery))
         {
-            string translatedValueQuery = AccessSqlTranslator.Translate(valueQuery,
-                out int valueParameterCount, out IReadOnlyList<string>? valueNames,
-                queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn, queryMirror.ConcatNulls);
+            string translatedValueQuery = queryMirror.TranslateQuery(valueQuery,
+                out int valueParameterCount, out IReadOnlyList<string>? valueNames);
             object?[]? valueParameters = BindQueryParameters(valueParameterCount, valueNames, suppliedParameters);
             var pivotValues = new List<object?>();
             using (MirrorReader valueReader = queryMirror.ExecuteReader(translatedValueQuery, valueParameters,
@@ -562,8 +568,7 @@ public sealed class UCanAccessCommand : DbCommand
             effectiveCommandText = CrosstabTranslator.AddPivotValues(effectiveCommandText, pivotValues);
         }
 
-        string sql = AccessSqlTranslator.Translate(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names,
-            queryMirror.IsMoneyColumn, queryMirror.IsExactDecimalColumn, queryMirror.IsDateColumn, queryMirror.ConcatNulls);
+        string sql = queryMirror.TranslateQuery(effectiveCommandText, out int parameterCount, out IReadOnlyList<string>? names);
         object?[]? parameters = null;
         if (parameterCount > 0)
         {
@@ -707,8 +712,7 @@ public sealed class UCanAccessCommand : DbCommand
             trimmed = trimmed[..^1].TrimEnd();
         }
 
-        Match match = Regex.Match(trimmed, @"^SELECT\s+@@IDENTITY(?=\s|$)(?<tail>.*)$",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        Match match = IdentitySelectRegex().Match(trimmed);
         if (!match.Success)
         {
             return sql;
@@ -746,8 +750,7 @@ public sealed class UCanAccessCommand : DbCommand
             return true;
         }
 
-        return Regex.IsMatch(alias, @"^[A-Za-z_][A-Za-z0-9_$#@]*$",
-            RegexOptions.CultureInvariant);
+        return IdentityAliasRegex().IsMatch(alias);
     }
 
     private static object?[]? BindQueryParameters(int parameterCount, IReadOnlyList<string>? names,

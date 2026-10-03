@@ -23,6 +23,7 @@ public sealed class MirrorReader : DbDataReader
     private readonly Action? _onDispose;
     private readonly Dictionary<int, bool> _columnIsBoolean = new();
     private readonly Dictionary<int, (string? Table, string? Column)> _baseColumns = new();
+    private readonly Dictionary<int, bool> _exactDecimalResults = new();
     private bool _disposed;
 
     internal MirrorReader(SqliteDataReader inner, SqliteCommand command,
@@ -81,11 +82,23 @@ public sealed class MirrorReader : DbDataReader
         return table == null || column == null ? null : _getColumnType(table, column);
     }
 
+    private bool IsExactDecimalResult(int ordinal)
+    {
+        // Pure function of (sql, ordinal): tokenizing the statement per cell
+        // dominates expression-heavy result sets, so resolve once per column.
+        if (!_exactDecimalResults.TryGetValue(ordinal, out bool value))
+        {
+            value = _isExactDecimalResult?.Invoke(ordinal) == true;
+            _exactDecimalResults[ordinal] = value;
+        }
+        return value;
+    }
+
     private object ConvertValue(int ordinal, object value)
     {
         DataType? type = GetColumnType(ordinal);
         return AccessValueCodec.ConvertFromSqlite(value, type, type == null
-            && _isExactDecimalResult?.Invoke(ordinal) == true);
+            && IsExactDecimalResult(ordinal));
     }
 
     private string DataTypeName(int ordinal)
@@ -145,7 +158,7 @@ public sealed class MirrorReader : DbDataReader
     public override string GetDataTypeName(int ordinal)
         => DataTypeName(ordinal) is { Length: > 0 } typeName
             ? typeName
-            : _isExactDecimalResult?.Invoke(ordinal) == true ? "NUMERIC"
+            : IsExactDecimalResult(ordinal) ? "NUMERIC"
             : IsBooleanColumn(ordinal) ? "BOOLEAN" : _inner.GetDataTypeName(ordinal);
 
     public override DateTime GetDateTime(int ordinal) => Convert.ToDateTime(GetValue(ordinal),
@@ -180,7 +193,7 @@ public sealed class MirrorReader : DbDataReader
             DataType.ShortDateTime or DataType.ExtDateTime => typeof(DateTime),
             DataType.Guid => typeof(Guid),
             DataType.Binary or DataType.Ole => typeof(byte[]),
-            _ => _isExactDecimalResult?.Invoke(ordinal) == true ? typeof(decimal) : _inner.GetFieldType(ordinal),
+            _ => IsExactDecimalResult(ordinal) ? typeof(decimal) : _inner.GetFieldType(ordinal),
         };
 
     public override T GetFieldValue<T>(int ordinal)

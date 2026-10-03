@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Data;
 using Microsoft.Data.Sqlite;
@@ -36,6 +37,7 @@ public sealed class Mirror : IDisposable
     private readonly HashSet<string> _moneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nonMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _exactDecimalColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _dateColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nonDateColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedDateColumns = new(StringComparer.OrdinalIgnoreCase);
@@ -43,6 +45,7 @@ public sealed class Mirror : IDisposable
     private readonly List<string> _viewNames = new();
     private readonly List<string> _diagnostics = new();
     private readonly object _sync = new();
+    private readonly ConcurrentDictionary<TranslationKey, TranslationResult> _translationCache = new();
     private bool _disposed;
 
     /// <summary>
@@ -187,8 +190,9 @@ public sealed class Mirror : IDisposable
             return _columnTypes.TryGetValue(normalized, out DataType qualifiedType)
                 && qualifiedType is DataType.Money or DataType.Numeric;
         }
-        return _columnTypes.Any(kv => kv.Key.EndsWith("." + normalized, StringComparison.OrdinalIgnoreCase)
-            && kv.Value is DataType.Money or DataType.Numeric);
+        // O(1) unqualified lookup; the previous EndsWith scan over all columns
+        // ran per operand of every arithmetic/comparison rewrite.
+        return _exactDecimalColumns.Contains(normalized);
     }
 
     internal bool IsDateColumn(string name)
@@ -205,6 +209,47 @@ public sealed class Mirror : IDisposable
     private bool AllowSystem(TableMetaData meta) => _includeSystem;
 
     public SqliteCommand CreateCommand() => _connection.CreateCommand();
+
+    private readonly record struct TranslationKey(string AccessSql, bool ConcatNulls);
+
+    private sealed record TranslationResult(string Sql, int ParameterCount, string[]? NamedParameters);
+
+    private const int MaxTranslationCacheEntries = 512;
+
+    /// <summary>
+    /// Translates Access SQL with this mirror's column classifications, memoizing
+    /// by statement text. Repeated commands (parameterized OLTP loops) skip the
+    /// lexer/parser entirely on a hit. The cache is cleared whenever column
+    /// classifications can change (see <see cref="ClearTranslationCache"/>).
+    /// </summary>
+    internal string TranslateQuery(string accessSql, out int parameterCount,
+        out IReadOnlyList<string>? namedParameters)
+    {
+        var key = new TranslationKey(accessSql, ConcatNulls);
+        if (_translationCache.TryGetValue(key, out TranslationResult? cached))
+        {
+            parameterCount = cached.ParameterCount;
+            namedParameters = cached.NamedParameters;
+            return cached.Sql;
+        }
+        string translated = AccessSqlTranslator.Translate(accessSql, out parameterCount,
+            out namedParameters, IsMoneyColumn, IsExactDecimalColumn, IsDateColumn, ConcatNulls);
+        if (_translationCache.Count >= MaxTranslationCacheEntries)
+        {
+            _translationCache.Clear();
+        }
+        _translationCache.TryAdd(key, new TranslationResult(translated, parameterCount,
+            namedParameters?.ToArray()));
+        return translated;
+    }
+
+    private void ClearTranslationCache() => _translationCache.Clear();
+
+    /// <summary>
+    /// Number of cached translations (test seam: proves repeated commands hit
+    /// the cache instead of re-running the lexer/parser).
+    /// </summary>
+    internal int TranslationCacheCount => _translationCache.Count;
 
     private void BuildSchemaAndLoad(bool buildSavedQueries)
     {
@@ -269,8 +314,8 @@ public sealed class Mirror : IDisposable
                 }
                 if (CrosstabTranslator.TryBuildDynamicValueQuery(querySql, out string valueQuery))
                 {
-                    string translatedValues = AccessSqlTranslator.Translate(valueQuery,
-                        out int valueParameterCount, out _, IsMoneyColumn, IsExactDecimalColumn, IsDateColumn, ConcatNulls);
+                    string translatedValues = TranslateQuery(valueQuery,
+                        out int valueParameterCount, out _);
                     if (valueParameterCount != 0)
                     {
                         throw new NotSupportedException(
@@ -291,8 +336,7 @@ public sealed class Mirror : IDisposable
                     }
                     querySql = CrosstabTranslator.AddPivotValues(querySql, values);
                 }
-                string translated = AccessSqlTranslator.Translate(querySql, out _, out _, IsMoneyColumn,
-                    IsExactDecimalColumn, IsDateColumn, ConcatNulls);
+                string translated = TranslateQuery(querySql, out _, out _);
                 using var cmd = _connection.CreateCommand();
                 cmd.CommandText = $"CREATE VIEW {SqlNames.Quote(query.Name)} AS {translated}";
                 cmd.ExecuteNonQuery();
@@ -338,6 +382,10 @@ public sealed class Mirror : IDisposable
             else
             {
                 _nonMoneyColumns.Add(col.Name);
+            }
+            if (col.Type is DataType.Money or DataType.Numeric)
+            {
+                _exactDecimalColumns.Add(col.Name);
             }
             if (col.Type is DataType.ShortDateTime or DataType.ExtDateTime)
             {
@@ -409,7 +457,7 @@ public sealed class Mirror : IDisposable
         SqliteTransaction? transaction = null)
     {
         locatorName ??= sqlName.Trim('"');
-        var locators = new Dictionary<long, Table.RowLocation>();
+        var locators = new Dictionary<long, Table.RowLocation>(table.RowCount);
         (Column Column, int FileIndex)[] ordered = OrderedColumns(table);
         var insertColumns = string.Join(", ", ordered.Select(o => SqlNames.Quote(o.Column.Name)));
         var placeholders = string.Join(", ", ordered.Select((_, i) => $"$p{i}"));
@@ -430,6 +478,10 @@ public sealed class Mirror : IDisposable
                 return p;
             }).ToArray();
 
+            // One reused rowid command instead of allocating a command per row.
+            using var idCommand = _connection.CreateCommand();
+            idCommand.Transaction = activeTransaction;
+            idCommand.CommandText = "SELECT last_insert_rowid()";
             foreach (Table.RowLocation location in table.RowLocations())
             {
                 for (int i = 0; i < ordered.Length; i++)
@@ -437,9 +489,6 @@ public sealed class Mirror : IDisposable
                     parameters[i].Value = ToSqliteValue(location.Row[ordered[i].FileIndex], ordered[i].Column);
                 }
                 cmd.ExecuteNonQuery();
-                using var idCommand = _connection.CreateCommand();
-                idCommand.Transaction = activeTransaction;
-                idCommand.CommandText = "SELECT last_insert_rowid()";
                 long sqliteRowId = Convert.ToInt64(idCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
                 locators[sqliteRowId] = location;
             }
@@ -902,12 +951,14 @@ public sealed class Mirror : IDisposable
 
     private void RebuildColumnClassifications()
     {
+        ClearTranslationCache();
         _booleanColumns.Clear();
         _nonBooleanColumns.Clear();
         _qualifiedBooleanColumns.Clear();
         _moneyColumns.Clear();
         _nonMoneyColumns.Clear();
         _qualifiedMoneyColumns.Clear();
+        _exactDecimalColumns.Clear();
         _dateColumns.Clear();
         _nonDateColumns.Clear();
         _qualifiedDateColumns.Clear();
@@ -937,6 +988,10 @@ public sealed class Mirror : IDisposable
             {
                 _nonMoneyColumns.Add(columnName);
             }
+            if (type is DataType.Money or DataType.Numeric)
+            {
+                _exactDecimalColumns.Add(columnName);
+            }
             if (type is DataType.ShortDateTime or DataType.ExtDateTime)
             {
                 _dateColumns.Add(columnName);
@@ -951,12 +1006,14 @@ public sealed class Mirror : IDisposable
 
     private void ClearMetadata()
     {
+        ClearTranslationCache();
         _booleanColumns.Clear();
         _nonBooleanColumns.Clear();
         _qualifiedBooleanColumns.Clear();
         _moneyColumns.Clear();
         _nonMoneyColumns.Clear();
         _qualifiedMoneyColumns.Clear();
+        _exactDecimalColumns.Clear();
         _dateColumns.Clear();
         _nonDateColumns.Clear();
         _qualifiedDateColumns.Clear();
@@ -981,6 +1038,7 @@ public sealed class Mirror : IDisposable
             MoneyColumns = new HashSet<string>(_moneyColumns, StringComparer.OrdinalIgnoreCase),
             NonMoneyColumns = new HashSet<string>(_nonMoneyColumns, StringComparer.OrdinalIgnoreCase),
             QualifiedMoneyColumns = new HashSet<string>(_qualifiedMoneyColumns, StringComparer.OrdinalIgnoreCase),
+            ExactDecimalColumns = new HashSet<string>(_exactDecimalColumns, StringComparer.OrdinalIgnoreCase),
             DateColumns = new HashSet<string>(_dateColumns, StringComparer.OrdinalIgnoreCase),
             NonDateColumns = new HashSet<string>(_nonDateColumns, StringComparer.OrdinalIgnoreCase),
             QualifiedDateColumns = new HashSet<string>(_qualifiedDateColumns, StringComparer.OrdinalIgnoreCase),
@@ -1001,12 +1059,14 @@ public sealed class Mirror : IDisposable
         public HashSet<string> MoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> NonMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> QualifiedMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> ExactDecimalColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> DateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> NonDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> QualifiedDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
         public void Restore(Mirror mirror)
         {
+            mirror.ClearTranslationCache();
             mirror._tableNames.Clear();
             foreach ((string name, string sqlName) in TableNames) mirror._tableNames[name] = sqlName;
             mirror._loadedTables.Clear();
@@ -1028,6 +1088,7 @@ public sealed class Mirror : IDisposable
             RestoreSet(mirror._moneyColumns, MoneyColumns);
             RestoreSet(mirror._nonMoneyColumns, NonMoneyColumns);
             RestoreSet(mirror._qualifiedMoneyColumns, QualifiedMoneyColumns);
+            RestoreSet(mirror._exactDecimalColumns, ExactDecimalColumns);
             RestoreSet(mirror._dateColumns, DateColumns);
             RestoreSet(mirror._nonDateColumns, NonDateColumns);
             RestoreSet(mirror._qualifiedDateColumns, QualifiedDateColumns);
