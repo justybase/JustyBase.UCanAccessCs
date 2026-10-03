@@ -42,6 +42,7 @@ public sealed class Table
     /// <see cref="DeleteComplexChildren"/>.
     /// </summary>
     private readonly Dictionary<int, Dictionary<int, List<Row>>> _complexChildLookup = new();
+    private long _complexChildLookupVersion;
     /// <summary>offset within the table-definition buffer where the index definitions start</summary>
     private int _indexBlockStart;
     /// <summary>the live first page of the table definition (shared with the usage maps)</summary>
@@ -1699,7 +1700,7 @@ public sealed class Table
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(page);
+            ArrayPool<byte>.Shared.Return(page, clearArray: true);
         }
     }
 
@@ -1744,7 +1745,7 @@ public sealed class Table
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(page);
+            ArrayPool<byte>.Shared.Return(page, clearArray: true);
         }
 
         foreach ((int pageNumber, int count) in references)
@@ -1949,7 +1950,14 @@ public sealed class Table
         }
 
         // Grouped lookup instead of a full flat-table scan per parent row:
-        // O(N+M) for the enumeration instead of O(N*M).
+        // O(N+M) for the enumeration instead of O(N*M). The lookup is tagged
+        // with the database-wide complex write version, so writes through a
+        // different Table handle invalidate it (no stale children).
+        if (_complexChildLookupVersion != _database.ComplexWriteVersion)
+        {
+            _complexChildLookup.Clear();
+            _complexChildLookupVersion = _database.ComplexWriteVersion;
+        }
         if (!_complexChildLookup.TryGetValue(column.ColumnIndex, out Dictionary<int, List<Row>>? byKey))
         {
             byKey = new Dictionary<int, List<Row>>();
@@ -2113,6 +2121,7 @@ public sealed class Table
     private void WriteComplexChildren(IReadOnlyList<ComplexWrite> writes, bool replaceExisting)
     {
         _complexChildLookup.Clear();
+        _database.BumpComplexWriteVersion();
         foreach (ComplexWrite write in writes)
         {
             Column? foreignColumn = write.Info.FlatTable.Columns.FirstOrDefault(c =>
@@ -2148,6 +2157,7 @@ public sealed class Table
         IReadOnlyList<(ComplexColumnInfo Info, Column Column, int Key)> deletes)
     {
         _complexChildLookup.Clear();
+        _database.BumpComplexWriteVersion();
         foreach ((ComplexColumnInfo info, Column column, int key) in deletes)
         {
             Column? foreignColumn = info.FlatTable.Columns.FirstOrDefault(c =>

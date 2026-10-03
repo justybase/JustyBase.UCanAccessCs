@@ -2,6 +2,45 @@ using Xunit;
 
 namespace UCanAccess.Tests;
 
+public class ExactDecimalCollisionTests
+{
+    [Fact]
+    public void Same_column_name_with_mixed_types_is_not_exact_decimal()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-dec-collide-{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(
+            Path.Combine(AppContext.BaseDirectory, "fixtures", "generated", "genEmpty.mdb"), path, true);
+        try
+        {
+            var conn = (UCanAccessConnection)UCanAccessFactory.Instance.CreateConnection()!;
+            conn.ConnectionString = $"Data Source={path};Read Only=false";
+            conn.Open();
+            using (conn)
+            {
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "CREATE TABLE t_dec (id LONG PRIMARY KEY, amount MONEY)";
+                    cmd.ExecuteNonQuery();
+                }
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "CREATE TABLE t_txt (id LONG PRIMARY KEY, amount TEXT(20))";
+                    cmd.ExecuteNonQuery();
+                }
+                var mirror = conn.Mirror;
+                Assert.True(mirror.IsExactDecimalColumn("t_dec.amount"));
+                Assert.False(mirror.IsExactDecimalColumn("t_txt.amount"));
+                // Unqualified: not every same-named column is decimal.
+                Assert.False(mirror.IsExactDecimalColumn("amount"));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+}
+
 public sealed class ExactDecimalTests
 {
     [Fact]

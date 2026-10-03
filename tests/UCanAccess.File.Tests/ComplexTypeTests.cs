@@ -77,6 +77,39 @@ public sealed class ComplexTypeTests
     }
 
     [Fact]
+    public void Complex_children_read_through_another_handle_are_not_stale()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"uca-complex-stale-{Guid.NewGuid():N}.accdb");
+        System.IO.File.Copy(Fixture("generated/complex.accdb"), path);
+        try
+        {
+            using var db = Database.Open(path, readOnly: false);
+            Table t1 = db.GetTable("ComplexFixture")!;
+            Assert.Single(t1.Rows());
+
+            Table t2 = db.GetTable("ComplexFixture")!;
+            t2.AddRow(new object?[]
+            {
+                2,
+                new[] { new AccessSingleValue("fresh") },
+                new[] { new AccessAttachment(new byte[] { 1 }, 0, "fresh.bin", null, "bin", null) },
+            });
+
+            // t1 built its child lookup before t2 wrote: it must rebuild,
+            // not serve the pre-write (single-row) snapshot.
+            List<Row> rows = t1.Rows().ToList();
+            Assert.Equal(2, rows.Count);
+            Row added = rows.Single(row => Convert.ToInt32(row[0]) == 2);
+            Assert.Equal(new[] { "fresh" },
+                Assert.IsType<AccessSingleValue[]>(added[1]).Select(value => value.Value));
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Complex_metadata_exposes_hidden_flat_tables()
     {
         using var db = Database.Open(Fixture("generated/complex.accdb"));

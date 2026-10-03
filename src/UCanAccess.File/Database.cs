@@ -103,6 +103,16 @@ public sealed class Database : IDisposable
 
     internal IReadOnlyDictionary<string, bool> GetAllowAutoNumberInsertFlags() => _allowAutoNumberInsert;
 
+    /// <summary>
+    /// Bumped whenever complex child rows change through any <see cref="Table"/>
+    /// handle of this database, so per-table complex read caches can detect
+    /// writes made through a different handle and rebuild instead of serving
+    /// stale children.
+    /// </summary>
+    internal long ComplexWriteVersion { get; private set; }
+
+    internal void BumpComplexWriteVersion() => ComplexWriteVersion++;
+
     private Database(Stream stream, bool closeChannel, Encoding? encoding, bool readOnly,
         bool allowExternalLinks, IAccessPageCodec? codec = null,
         IReadOnlyDictionary<string, string>? linkRemap = null, bool openExclusive = false)
@@ -261,9 +271,9 @@ public sealed class Database : IDisposable
                 {
                     if (db != null)
                     {
-                        // Database owns roStream via PageChannel (closeChannel=true).
+                        // Database owns roStream via PageChannel (closeChannel=true),
+                        // and PageChannel owns the codec: a single Dispose covers all three.
                         db.Dispose();
-                        codec?.Dispose();
                     }
                     else
                     {

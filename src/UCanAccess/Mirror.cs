@@ -38,6 +38,7 @@ public sealed class Mirror : IDisposable
     private readonly HashSet<string> _nonMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedMoneyColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _exactDecimalColumns = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _nonExactDecimalColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _dateColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _nonDateColumns = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _qualifiedDateColumns = new(StringComparer.OrdinalIgnoreCase);
@@ -191,8 +192,11 @@ public sealed class Mirror : IDisposable
                 && qualifiedType is DataType.Money or DataType.Numeric;
         }
         // O(1) unqualified lookup; the previous EndsWith scan over all columns
-        // ran per operand of every arithmetic/comparison rewrite.
-        return _exactDecimalColumns.Contains(normalized);
+        // ran per operand of every arithmetic/comparison rewrite. Matches the
+        // IsMoneyColumn contract: true only when every same-named column is
+        // exact-decimal, so a TEXT/decimal name collision is not miswrapped.
+        return _exactDecimalColumns.Contains(normalized)
+            && !_nonExactDecimalColumns.Contains(normalized);
     }
 
     internal bool IsDateColumn(string name)
@@ -229,7 +233,8 @@ public sealed class Mirror : IDisposable
         if (_translationCache.TryGetValue(key, out TranslationResult? cached))
         {
             parameterCount = cached.ParameterCount;
-            namedParameters = cached.NamedParameters;
+            // Defensive copy: the cached array must not escape mutably.
+            namedParameters = cached.NamedParameters?.ToArray();
             return cached.Sql;
         }
         string translated = AccessSqlTranslator.Translate(accessSql, out parameterCount,
@@ -386,6 +391,10 @@ public sealed class Mirror : IDisposable
             if (col.Type is DataType.Money or DataType.Numeric)
             {
                 _exactDecimalColumns.Add(col.Name);
+            }
+            else
+            {
+                _nonExactDecimalColumns.Add(col.Name);
             }
             if (col.Type is DataType.ShortDateTime or DataType.ExtDateTime)
             {
@@ -959,6 +968,7 @@ public sealed class Mirror : IDisposable
         _nonMoneyColumns.Clear();
         _qualifiedMoneyColumns.Clear();
         _exactDecimalColumns.Clear();
+        _nonExactDecimalColumns.Clear();
         _dateColumns.Clear();
         _nonDateColumns.Clear();
         _qualifiedDateColumns.Clear();
@@ -992,6 +1002,10 @@ public sealed class Mirror : IDisposable
             {
                 _exactDecimalColumns.Add(columnName);
             }
+            else
+            {
+                _nonExactDecimalColumns.Add(columnName);
+            }
             if (type is DataType.ShortDateTime or DataType.ExtDateTime)
             {
                 _dateColumns.Add(columnName);
@@ -1014,6 +1028,7 @@ public sealed class Mirror : IDisposable
         _nonMoneyColumns.Clear();
         _qualifiedMoneyColumns.Clear();
         _exactDecimalColumns.Clear();
+        _nonExactDecimalColumns.Clear();
         _dateColumns.Clear();
         _nonDateColumns.Clear();
         _qualifiedDateColumns.Clear();
@@ -1039,6 +1054,7 @@ public sealed class Mirror : IDisposable
             NonMoneyColumns = new HashSet<string>(_nonMoneyColumns, StringComparer.OrdinalIgnoreCase),
             QualifiedMoneyColumns = new HashSet<string>(_qualifiedMoneyColumns, StringComparer.OrdinalIgnoreCase),
             ExactDecimalColumns = new HashSet<string>(_exactDecimalColumns, StringComparer.OrdinalIgnoreCase),
+            NonExactDecimalColumns = new HashSet<string>(_nonExactDecimalColumns, StringComparer.OrdinalIgnoreCase),
             DateColumns = new HashSet<string>(_dateColumns, StringComparer.OrdinalIgnoreCase),
             NonDateColumns = new HashSet<string>(_nonDateColumns, StringComparer.OrdinalIgnoreCase),
             QualifiedDateColumns = new HashSet<string>(_qualifiedDateColumns, StringComparer.OrdinalIgnoreCase),
@@ -1060,6 +1076,7 @@ public sealed class Mirror : IDisposable
         public HashSet<string> NonMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> QualifiedMoneyColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> ExactDecimalColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> NonExactDecimalColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> DateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> NonDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> QualifiedDateColumns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
@@ -1089,6 +1106,7 @@ public sealed class Mirror : IDisposable
             RestoreSet(mirror._nonMoneyColumns, NonMoneyColumns);
             RestoreSet(mirror._qualifiedMoneyColumns, QualifiedMoneyColumns);
             RestoreSet(mirror._exactDecimalColumns, ExactDecimalColumns);
+            RestoreSet(mirror._nonExactDecimalColumns, NonExactDecimalColumns);
             RestoreSet(mirror._dateColumns, DateColumns);
             RestoreSet(mirror._nonDateColumns, NonDateColumns);
             RestoreSet(mirror._qualifiedDateColumns, QualifiedDateColumns);
