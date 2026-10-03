@@ -652,7 +652,7 @@ public static class AccessDdl
         string typeName = ReadTypeName(tokens, ref pos).ToUpperInvariant();
         switch (typeName)
         {
-            case "TEXT" or "VARCHAR" or "CHAR" or "CHARACTER" or "NVARCHAR" or "STRING":
+            case "TEXT" or "VARCHAR" or "VARCHAR2" or "CHAR" or "NCHAR" or "CHARACTER" or "NVARCHAR" or "STRING":
             {
                 int len = ReadOptionalParenInt(tokens, ref pos) ?? 50;
                 return new ColumnBuilder(name, DataType.Text).WithLength(2 * len);
@@ -680,13 +680,13 @@ public static class AccessDdl
                 return new ColumnBuilder(name, DataType.Double);
             case "SINGLE":
                 return new ColumnBuilder(name, DataType.Float);
-            case "DATETIME" or "DATE" or "TIME" or "TIMESTAMP":
+            case "DATETIME" or "SMALLDATETIME" or "DATE" or "TIME" or "TIMESTAMP":
                 return new ColumnBuilder(name, DataType.ShortDateTime);
             case "BOOLEAN" or "BIT" or "YESNO" or "LOGICAL":
                 return new ColumnBuilder(name, DataType.Boolean);
             case "GUID" or "UNIQUEIDENTIFIER":
                 return new ColumnBuilder(name, DataType.Guid);
-            case "OLE" or "BINARY" or "LONGBINARY":
+            case "OLE" or "BINARY" or "VARBINARY" or "LONGBINARY" or "LONGVARBINARY" or "IMAGE" or "GENERAL":
                 return new ColumnBuilder(name, DataType.Ole);
             default:
                 throw new NotSupportedException($"Unsupported column type '{typeName}'.");

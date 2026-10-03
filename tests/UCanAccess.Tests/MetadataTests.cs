@@ -103,6 +103,45 @@ public class MetadataTests
     }
 
     [Fact]
+    public void GetSchema_exposes_ddl_created_foreign_key_round_trip()
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_meta_{Guid.NewGuid():N}.mdb");
+        System.IO.File.Copy(Path.Combine(AppContext.BaseDirectory, "fixtures", "generated", "genEmpty.mdb"), tmp, true);
+        try
+        {
+            var conn = UCanAccessFactory.Instance.CreateConnection()!;
+            conn.ConnectionString = $"Data Source={tmp};Read Only=false";
+            conn.Open();
+            using (conn)
+            {
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "CREATE TABLE t_rt_parent (id LONG PRIMARY KEY, name TEXT(30) DEFAULT 'p')";
+                    cmd.ExecuteNonQuery();
+                }
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "CREATE TABLE t_rt_child (id LONG PRIMARY KEY, parent_id LONG, CONSTRAINT fk_rt FOREIGN KEY (parent_id) REFERENCES t_rt_parent (id) ON DELETE CASCADE)";
+                    cmd.ExecuteNonQuery();
+                }
+                System.Data.DataTable fks = conn.GetSchema("ForeignKeys",
+                    new string?[] { null, null, null, null, null, "t_rt_child" });
+                Assert.Contains(fks.AsEnumerable(),
+                    r => r.Field<string>("CONSTRAINT_NAME") == "fk_rt");
+                System.Data.DataTable cols = conn.GetSchema("Columns",
+                    new string?[] { null, null, "t_rt_parent", "name" });
+                var row = Assert.Single(cols.AsEnumerable());
+                Assert.Equal("System.String", row.Field<string>("DATA_TYPE"));
+                Assert.Equal("'p'", row.Field<string>("COLUMN_DEFAULT"));
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
     public void GetSchema_restrictions_filter_tables()
     {
         using var conn = Open("sqljoin.mdb");

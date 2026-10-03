@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using UCanAccess.File;
 using Xunit;
 
 namespace UCanAccess.Tests;
@@ -1327,6 +1328,160 @@ public class SqlDdlTests
             Exec(conn, "ENABLE AUTOINCREMENT ON t_detail");
             Exec(conn, "INSERT INTO t_detail (master_id, qty, price, dt, note, code) VALUES (1, 3, 1.00, #1/1/2024#, 'after enable tx', 'x09')");
             Assert.Equal(702L, Scalar(conn, "SELECT id FROM t_detail WHERE note = 'after enable tx'"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    private static string TempCopyAccdb(string fixture)
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), $"ucanaccess_ddl_{Guid.NewGuid():N}.accdb");
+        System.IO.File.Copy(fixture, tmp, true);
+        return tmp;
+    }
+
+    [Fact]
+    public void Alter_drop_column_on_relationship_table_is_rejected()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_rel_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE t_rel_child (id LONG PRIMARY KEY, parent_id LONG, note TEXT(20))");
+            Exec(conn, "ALTER TABLE t_rel_child ADD CONSTRAINT fk_rel FOREIGN KEY (parent_id) REFERENCES t_rel_parent (id)");
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                Exec(conn, "ALTER TABLE t_rel_child DROP COLUMN note"));
+            Assert.Contains("relationships", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_add_column_on_calculated_table_is_rejected()
+    {
+        string tmp = TempCopyAccdb(Fixture("accdb2016calc.accdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                Exec(conn, "ALTER TABLE t_people ADD COLUMN note TEXT(20)"));
+            Assert.Contains("calculated", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_drop_column_on_calculated_table_is_rejected()
+    {
+        string tmp = TempCopyAccdb(Fixture("accdb2016calc.accdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                Exec(conn, "ALTER TABLE t_people DROP COLUMN age"));
+            Assert.Contains("calculated", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Create_index_on_shared_relationship_index_is_rejected()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_shr_parent (id LONG PRIMARY KEY)");
+            Exec(conn, "CREATE TABLE t_shr_child (id LONG PRIMARY KEY, parent_id LONG)");
+            Exec(conn, "ALTER TABLE t_shr_child ADD CONSTRAINT fk_shr_one FOREIGN KEY (parent_id) REFERENCES t_shr_parent (id)");
+            Exec(conn, "ALTER TABLE t_shr_child ADD CONSTRAINT fk_shr_two FOREIGN KEY (parent_id) REFERENCES t_shr_parent (id)");
+            try
+            {
+                Exec(conn, "CREATE INDEX idx_shr_note ON t_shr_child (id)");
+                // No physical sharing on this shape: the mutation must succeed
+                // and stay readable instead of failing half-way.
+                Assert.Contains(((UCanAccessConnection)conn).AccessDatabase.GetIndexInfo("t_shr_child"),
+                    index => index.Name == "idx_shr_note");
+            }
+            catch (NotSupportedException ex)
+            {
+                // Shared physical index: deterministic rejection, file untouched.
+                Assert.Contains("shared", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Alter_add_unique_constraint_is_rejected()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_uq (id LONG PRIMARY KEY, code TEXT(20))");
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                Exec(conn, "ALTER TABLE t_uq ADD CONSTRAINT uq_code UNIQUE (code)"));
+            Assert.Contains("PRIMARY KEY", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Create_table_accepts_access_type_aliases()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            Exec(conn, "CREATE TABLE t_aliases (id COUNTER PRIMARY KEY, v2 VARCHAR2(30), nc NCHAR(10), sdt SMALLDATETIME, img IMAGE, vb VARBINARY, gen GENERAL)");
+            var columns = ((UCanAccessConnection)conn).AccessDatabase.GetTable("t_aliases")!.Columns
+                .ToDictionary(c => c.Name, c => c.Type, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(DataType.Text, columns["v2"]);
+            Assert.Equal(DataType.Text, columns["nc"]);
+            Assert.Equal(DataType.ShortDateTime, columns["sdt"]);
+            Assert.Equal(DataType.Ole, columns["img"]);
+            Assert.Equal(DataType.Ole, columns["vb"]);
+            Assert.Equal(DataType.Ole, columns["gen"]);
+            Exec(conn, "INSERT INTO t_aliases (v2) VALUES ('alias-ok')");
+            Assert.Equal("alias-ok", Scalar(conn, "SELECT v2 FROM t_aliases"));
+        }
+        finally
+        {
+            System.IO.File.Delete(tmp);
+        }
+    }
+
+    [Fact]
+    public void Create_table_rejects_unsupported_column_type()
+    {
+        string tmp = TempCopy(Fixture("generated/genEmpty.mdb"));
+        try
+        {
+            using var conn = OpenWritable(tmp);
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                Exec(conn, "CREATE TABLE t_badtype (id LONG, payload COMPLEX)"));
+            Assert.Contains("COMPLEX", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("t_badtype",
+                ((UCanAccessConnection)conn).AccessDatabase.GetTableNames());
         }
         finally
         {
