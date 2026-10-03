@@ -31,6 +31,50 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
     public BigInteger Unscaled { get; }
     public int Scale { get; }
 
+    // Cached powers of ten: every rescale/add/compare/divide needs 10^n.
+    // Precomputed once; grown under lock on the rare overshoot path.
+    private static BigInteger[] _pow10 = InitPow10(64);
+    private static readonly object Pow10Lock = new();
+
+    private static BigInteger[] InitPow10(int count)
+    {
+        var table = new BigInteger[count];
+        BigInteger value = BigInteger.One;
+        for (int i = 0; i < count; i++)
+        {
+            table[i] = value;
+            value *= 10;
+        }
+        return table;
+    }
+
+    internal static BigInteger Pow10(int exponent)
+    {
+        BigInteger[] table = _pow10;
+        if ((uint)exponent < (uint)table.Length)
+        {
+            return table[exponent];
+        }
+        lock (Pow10Lock)
+        {
+            table = _pow10;
+            if (exponent < table.Length)
+            {
+                return table[exponent];
+            }
+            var grown = new BigInteger[Math.Max(exponent + 1, table.Length * 2)];
+            Array.Copy(table, grown, table.Length);
+            BigInteger value = table[table.Length - 1] * 10;
+            for (int i = table.Length; i < grown.Length; i++)
+            {
+                grown[i] = value;
+                value *= 10;
+            }
+            _pow10 = grown;
+            return grown[exponent];
+        }
+    }
+
     public static ExactDecimal Parse(object? value)
     {
         if (value is null or DBNull)
@@ -58,41 +102,80 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
         };
     }
 
+    private enum DecimalError { None, Empty, Exponent, Invalid }
+
     public static ExactDecimal Parse(string text)
     {
-        string value = text.Trim();
-        if (value.Length == 0)
+        if (TryParseSpan(text.AsSpan(), out ExactDecimal result, out DecimalError error))
         {
-            throw new FormatException("Empty decimal value.");
+            return result;
+        }
+        throw error switch
+        {
+            DecimalError.Empty => new FormatException("Empty decimal value."),
+            DecimalError.Exponent => new FormatException($"Invalid decimal exponent '{text}'."),
+            _ => new FormatException($"Invalid decimal value '{text}'."),
+        };
+    }
+
+    private static bool TryParseSpan(ReadOnlySpan<char> text, out ExactDecimal result, out DecimalError error)
+    {
+        result = default;
+        error = DecimalError.Invalid;
+        ReadOnlySpan<char> value = text.Trim();
+        if (value.IsEmpty)
+        {
+            error = DecimalError.Empty;
+            return false;
         }
 
         int exponent = 0;
-        int exponentIndex = value.IndexOfAny(['e', 'E']);
+        int exponentIndex = value.IndexOfAny('e', 'E');
         if (exponentIndex >= 0)
         {
             if (!int.TryParse(value[(exponentIndex + 1)..], NumberStyles.Integer,
                     CultureInfo.InvariantCulture, out exponent))
             {
-                throw new FormatException($"Invalid decimal exponent '{text}'.");
+                error = DecimalError.Exponent;
+                return false;
             }
             value = value[..exponentIndex];
         }
 
-        bool negative = value.StartsWith("-", StringComparison.Ordinal);
-        if (negative || value.StartsWith("+", StringComparison.Ordinal))
+        bool negative = false;
+        if (!value.IsEmpty && (value[0] == '-' || value[0] == '+'))
         {
+            negative = value[0] == '-';
             value = value[1..];
         }
 
         int dot = value.IndexOf('.');
         int scale = dot < 0 ? 0 : value.Length - dot - 1;
-        string digits = dot < 0 ? value : value.Remove(dot, 1);
-        if (digits.Length == 0 || digits.Any(c => c is < '0' or > '9'))
+        int digitCount = value.Length - (dot < 0 ? 0 : 1);
+        if (digitCount == 0)
         {
-            throw new FormatException($"Invalid decimal value '{text}'.");
+            return false;
         }
 
-        BigInteger unscaled = BigInteger.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+        // Copy the digits around the dot into one contiguous buffer without
+        // allocating intermediate strings (typical values fit on the stack).
+        Span<char> buffer = digitCount <= 64 ? stackalloc char[64] : new char[digitCount];
+        int pos = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '.')
+            {
+                continue;
+            }
+            if (c is < '0' or > '9')
+            {
+                return false;
+            }
+            buffer[pos++] = c;
+        }
+
+        BigInteger unscaled = BigInteger.Parse(buffer[..pos], NumberStyles.None, CultureInfo.InvariantCulture);
         if (negative)
         {
             unscaled = -unscaled;
@@ -100,7 +183,7 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
 
         if (exponent > 0)
         {
-            unscaled *= BigInteger.Pow(10, exponent);
+            unscaled *= Pow10(exponent);
             scale = Math.Max(0, scale - exponent);
         }
         else if (exponent < 0)
@@ -108,7 +191,9 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
             scale += -exponent;
         }
 
-        return new ExactDecimal(unscaled, scale);
+        result = new ExactDecimal(unscaled, scale);
+        error = DecimalError.None;
+        return true;
     }
 
     public static ExactDecimal FromDecimal(decimal value)
@@ -136,10 +221,10 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
         }
         if (scale > Scale)
         {
-            return new ExactDecimal(Unscaled * BigInteger.Pow(10, scale - Scale), scale);
+            return new ExactDecimal(Unscaled * Pow10(scale - Scale), scale);
         }
 
-        BigInteger divisor = BigInteger.Pow(10, Scale - scale);
+        BigInteger divisor = Pow10(Scale - scale);
         BigInteger quotient = BigInteger.DivRem(Unscaled, divisor, out BigInteger remainder);
         BigInteger magnitude = BigInteger.Abs(remainder);
         if (magnitude * 2 >= divisor)
@@ -151,9 +236,15 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
 
     public static ExactDecimal Add(ExactDecimal left, ExactDecimal right)
     {
+        // Same-scale fast path: MONEY columns are always scale 4, so decimal
+        // addition usually needs no rescaling at all.
+        if (left.Scale == right.Scale)
+        {
+            return new ExactDecimal(left.Unscaled + right.Unscaled, left.Scale);
+        }
         int scale = Math.Max(left.Scale, right.Scale);
-        return new ExactDecimal(left.Unscaled * BigInteger.Pow(10, scale - left.Scale)
-            + right.Unscaled * BigInteger.Pow(10, scale - right.Scale), scale);
+        return new ExactDecimal(left.Unscaled * Pow10(scale - left.Scale)
+            + right.Unscaled * Pow10(scale - right.Scale), scale);
     }
 
     public static ExactDecimal Subtract(ExactDecimal left, ExactDecimal right)
@@ -170,7 +261,7 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
         }
 
         int scale = Math.Max(0, resultScale + right.Scale - left.Scale);
-        BigInteger numerator = left.Unscaled * BigInteger.Pow(10, scale);
+        BigInteger numerator = left.Unscaled * Pow10(scale);
         BigInteger quotient = BigInteger.DivRem(numerator, right.Unscaled, out BigInteger remainder);
         BigInteger divisor = BigInteger.Abs(right.Unscaled);
         if (BigInteger.Abs(remainder) * 2 >= divisor)
@@ -183,8 +274,8 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
     public int CompareTo(ExactDecimal other)
     {
         int scale = Math.Max(Scale, other.Scale);
-        BigInteger left = Unscaled * BigInteger.Pow(10, scale - Scale);
-        BigInteger right = other.Unscaled * BigInteger.Pow(10, scale - other.Scale);
+        BigInteger left = Unscaled * Pow10(scale - Scale);
+        BigInteger right = other.Unscaled * Pow10(scale - other.Scale);
         return left.CompareTo(right);
     }
 
@@ -198,11 +289,11 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
         BigInteger unscaled = Unscaled;
         if (scale > Scale)
         {
-            unscaled *= BigInteger.Pow(10, scale - Scale);
+            unscaled *= Pow10(scale - Scale);
         }
         else if (scale < Scale)
         {
-            BigInteger divisor = BigInteger.Pow(10, Scale - scale);
+            BigInteger divisor = Pow10(Scale - scale);
             BigInteger quotient = BigInteger.DivRem(unscaled, divisor, out BigInteger remainder);
             if (BigInteger.Abs(remainder) * 2 >= divisor)
             {
@@ -213,17 +304,39 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
 
         BigInteger magnitude = BigInteger.Abs(unscaled);
         string digits = magnitude.ToString(CultureInfo.InvariantCulture);
-        if (scale == 0)
+        bool negative = unscaled < 0;
+        int intDigits = digits.Length - scale;
+        int intLen = Math.Max(intDigits, 1);
+        int length = (negative ? 1 : 0) + intLen + (scale == 0 ? 0 : 1 + scale);
+        return string.Create(length, (digits, scale, intDigits, intLen, negative), static (span, state) =>
         {
-            return unscaled < 0 ? "-" + digits : digits;
-        }
-        if (digits.Length <= scale)
-        {
-            digits = digits.PadLeft(scale + 1, '0');
-        }
-        int split = digits.Length - scale;
-        string result = digits[..split] + "." + digits[split..];
-        return unscaled < 0 ? "-" + result : result;
+            int pos = 0;
+            if (state.negative)
+            {
+                span[pos++] = '-';
+            }
+            if (state.intDigits <= 0)
+            {
+                span[pos++] = '0';
+            }
+            else
+            {
+                state.digits.AsSpan(0, state.intDigits).CopyTo(span[pos..]);
+                pos += state.intDigits;
+            }
+            if (state.scale > 0)
+            {
+                span[pos++] = '.';
+                ReadOnlySpan<char> frac = state.intDigits <= 0
+                    ? state.digits.AsSpan()
+                    : state.digits.AsSpan(state.intDigits);
+                for (int i = frac.Length; i < state.scale; i++)
+                {
+                    span[pos++] = '0';
+                }
+                frac.CopyTo(span[pos..]);
+            }
+        });
     }
 
     public override string ToString()
@@ -237,15 +350,57 @@ internal readonly struct ExactDecimal : IComparable<ExactDecimal>
 
     internal static bool TryParse(object? value, out ExactDecimal result)
     {
-        try
+        // No exceptions for control flow: invalid inputs return false (except
+        // null/DBNull, which historically throw from Parse and keep doing so).
+        switch (value)
         {
-            result = Parse(value);
-            return true;
-        }
-        catch (Exception) when (value is not null and not DBNull)
-        {
-            result = default;
-            return false;
+            case null or DBNull:
+                result = Parse(value);
+                return true;
+            case ExactDecimal exact:
+                result = exact;
+                return true;
+            case decimal number:
+                result = FromDecimal(number);
+                return true;
+            case BigInteger number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case byte number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case sbyte number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case short number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case ushort number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case int number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case uint number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case long number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case ulong number:
+                result = new ExactDecimal(number, 0);
+                return true;
+            case float number:
+                return TryParseSpan(number.ToString("R", CultureInfo.InvariantCulture).AsSpan(),
+                    out result, out _);
+            case double number:
+                return TryParseSpan(number.ToString("R", CultureInfo.InvariantCulture).AsSpan(),
+                    out result, out _);
+            case string text:
+                return TryParseSpan(text.AsSpan(), out result, out _);
+            default:
+                string fallback = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "0";
+                return TryParseSpan(fallback.AsSpan(), out result, out _);
         }
     }
 }

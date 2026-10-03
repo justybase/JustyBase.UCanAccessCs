@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -9,8 +10,14 @@ namespace UCanAccess;
 /// Registers Access/VBA built-in functions as SQLite scalar functions
 /// (port of the UCanAccess function library).
 /// </summary>
-public static class AccessFunctions
+public static partial class AccessFunctions
 {
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+    private static partial Regex FunctionNameRegex();
+
+    [GeneratedRegex(@"^\s*[+-]?(\d+\.?\d*|\.\d+)([Ee][+-]?\d+)?")]
+    private static partial Regex ValPrefixRegex();
+
     private static Func<DateTime> _clock = () => DateTime.Now;
     private static readonly CultureInfo AccessCulture = CultureInfo.GetCultureInfo("en-US");
 
@@ -254,7 +261,7 @@ public static class AccessFunctions
         {
             throw new ArgumentOutOfRangeException(nameof(arity), arity, "Arity must be -1 or greater.");
         }
-        if (!Regex.IsMatch(name, "^[A-Za-z_][A-Za-z0-9_]*$"))
+        if (!FunctionNameRegex().IsMatch(name))
         {
             throw new ArgumentException("Function names must start with a letter or underscore and contain only ASCII letters, digits or underscores.", nameof(name));
         }
@@ -676,7 +683,7 @@ public static class AccessFunctions
 
     private static double Val(string s)
     {
-        var match = Regex.Match(s ?? "", @"^\s*[+-]?(\d+\.?\d*|\.\d+)([Ee][+-]?\d+)?");
+        var match = ValPrefixRegex().Match(s ?? "");
         return match.Success && double.TryParse(match.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double d)
             ? d
             : 0;
@@ -1291,6 +1298,12 @@ public static class AccessFunctions
     // Access LIKE
     // ------------------------------------------------------------------
 
+    // Compiled LIKE regexes, keyed by (pattern, case-sensitivity). Building and
+    // compiling the regex per row dominates LIKE queries; patterns repeat, so
+    // cache them. Capped to bound memory with adversarial pattern variety.
+    private static readonly ConcurrentDictionary<(string Pattern, bool IgnoreCase), Regex> LikeRegexCache = new();
+    private const int MaxLikeRegexCacheEntries = 1024;
+
     internal static bool AccessLikePattern(string? value, string? pattern, bool ignoreCase = true)
     {
         if (pattern == null)
@@ -1301,14 +1314,24 @@ public static class AccessFunctions
         {
             return false;
         }
+        if (LikeRegexCache.TryGetValue((pattern, ignoreCase), out Regex? cached))
+        {
+            return cached.IsMatch(value);
+        }
         string regex = ConvertLikePattern(pattern);
-        RegexOptions options = RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
-        return Regex.IsMatch(value, regex, options);
+        RegexOptions options = RegexOptions.Compiled | RegexOptions.CultureInvariant
+            | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+        var compiled = new Regex(regex, options);
+        if (LikeRegexCache.Count < MaxLikeRegexCacheEntries)
+        {
+            LikeRegexCache.TryAdd((pattern, ignoreCase), compiled);
+        }
+        return compiled.IsMatch(value);
     }
 
     private static string ConvertLikePattern(string pattern)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(pattern.Length * 2 + 2);
         sb.Append('^');
         int i = 0;
         int n = pattern.Length;

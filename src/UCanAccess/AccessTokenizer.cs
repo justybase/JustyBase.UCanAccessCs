@@ -38,7 +38,7 @@ internal static class AccessTokenizer
     public static List<Token> Tokenize(string sql)
     {
         TokenList<NzToken> tokens = DialectRuntime.Tokenize(sql, SqlDialect.Access);
-        var result = new List<Token>();
+        var result = new List<Token>(sql.Length / 6 + 8);
         foreach (Token<NzToken> t in tokens)
         {
             Token? converted = Convert(t);

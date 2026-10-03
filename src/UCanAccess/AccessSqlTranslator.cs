@@ -13,8 +13,14 @@ namespace UCanAccess;
 /// '&amp;' (Access null semantics) and Access-style LIKE wildcards (via a custom
 /// <c>access_like</c> function).
 /// </summary>
-public static class AccessSqlTranslator
+public static partial class AccessSqlTranslator
 {
+    [GeneratedRegex(@"\[([^\]]+)\]")]
+    private static partial Regex BracketedIdentifierRegex();
+
+    [GeneratedRegex(@"\s+WITH\s+OWNERACCESS\s+OPTION\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex OwnerAccessOptionRegex();
+
     private static readonly HashSet<string> WordBoundaries = new(StringComparer.OrdinalIgnoreCase)
     {
         "and", "or", "not", "is", "in", "between", "like", "exists",
@@ -249,8 +255,8 @@ public static class AccessSqlTranslator
         // last in DESC. Rewrite bare "col DESC" sort keys so NULLs sort first.
         RewriteOrderBy(work);
 
-        // rebuild output
-        var sb = new StringBuilder();
+        // rebuild output (pre-size from the input: translation grows it slightly)
+        var sb = new StringBuilder(accessSql.Length + 32);
         for (int i = 0; i < work.Count; i++)
         {
             if (i > 0 && !NeedsNoSpace(work[i - 1], work[i]))
@@ -350,7 +356,7 @@ public static class AccessSqlTranslator
             if (semi >= 0)
             {
                 string clause = s[..semi];
-                foreach (Match m in Regex.Matches(clause, @"\[([^\]]+)\]"))
+                foreach (Match m in BracketedIdentifierRegex().Matches(clause))
                 {
                     declared.Add(m.Groups[1].Value);
                 }
@@ -359,7 +365,7 @@ public static class AccessSqlTranslator
         }
 
         // strip trailing WITH OWNERACCESS OPTION
-        s = Regex.Replace(s, @"\s+WITH\s+OWNERACCESS\s+OPTION\s*$", "", RegexOptions.IgnoreCase).TrimEnd();
+        s = OwnerAccessOptionRegex().Replace(s, "").TrimEnd();
 
         // normalize parameters to '?' placeholders
         var sb = new StringBuilder(s.Length);
@@ -657,14 +663,24 @@ public static class AccessSqlTranslator
         {
             return false;
         }
-        return work.Skip(start).Take(end - start).All(token =>
-            token.Kind == Kind.Number
-            || token.Text is "+" or "-" or "(" or ")" or "."
-            || token.Text == "?"
-            || token.Kind is Kind.Word or Kind.Ident &&
-                (token.Text.StartsWith("@", StringComparison.Ordinal)
+        for (int i = start; i < end; i++)
+        {
+            Token token = work[i];
+            if (token.Kind == Kind.Number
+                || token.Text is "+" or "-" or "(" or ")" or "." or "?")
+            {
+                continue;
+            }
+            if (token.Kind is Kind.Word or Kind.Ident
+                && (token.Text.StartsWith("@", StringComparison.Ordinal)
                     || token.Text.StartsWith(":", StringComparison.Ordinal)
-                    || token.Text.StartsWith("$", StringComparison.Ordinal)));
+                    || token.Text.StartsWith("$", StringComparison.Ordinal)))
+            {
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     private static void RewriteExactDecimalAggregates(List<Token> work, Func<string, bool>? isExactDecimalColumn)
@@ -676,14 +692,11 @@ public static class AccessSqlTranslator
 
         for (int i = 0; i + 3 < work.Count; i++)
         {
-            string aggregate = work[i].Text.ToLowerInvariant();
-            string replacement = aggregate switch
-            {
-                "sum" => "uca_decimal_sum",
-                "min" => "uca_decimal_min",
-                "max" => "uca_decimal_max",
-                _ => string.Empty,
-            };
+            string aggregate = work[i].Text;
+            string replacement = aggregate.Equals("sum", StringComparison.OrdinalIgnoreCase) ? "uca_decimal_sum"
+                : aggregate.Equals("min", StringComparison.OrdinalIgnoreCase) ? "uca_decimal_min"
+                : aggregate.Equals("max", StringComparison.OrdinalIgnoreCase) ? "uca_decimal_max"
+                : string.Empty;
             if (replacement.Length == 0 || work[i + 1].Text != "(")
             {
                 continue;
@@ -856,7 +869,7 @@ public static class AccessSqlTranslator
 
     private static string Join(List<Token> work, int start, int end)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder((end - start) * 8);
         for (int i = start; i < end; i++)
         {
             if (i > start && !NeedsNoSpace(work[i - 1], work[i]))
