@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - Performance (provider): memoized per-mirror SQL translation (`Mirror.TranslateQuery`,
   also used by DML/CTAS paths) with `TranslationCacheTests`; hoisted
@@ -15,15 +15,15 @@
   write invalidation, pooled encrypted-write buffers. See `docs/PERFORMANCE.md`
   for before/after numbers (`ProviderBenchmarkTests`, opt-in `UCANACCESS_PERF=1`).
 - Unified the build: `TreatWarningsAsErrors=true` locally and in CI,
-  `EnableNETAnalyzers=true`, single `JustyBaseParserVersion` 0.8.7 consumed via
+  `EnableNETAnalyzers=true`, single `JustyBaseParserVersion` 0.8.8 consumed via
   `$(JustyBaseParserVersion)`, plus repo `.editorconfig`/`global.json` (S1).
 - Pinned the Java oracle to UCanAccess 5.1.7 (Jackcess 5.1.5/HSQLDB 2.7.4
   unchanged); `run.ps1` regeneration is byte-identical for the committed
   fixtures, so the 5.1.7 baseline is adopted without oracle drift (S4).
-- Prepare the provider package 1.0.3 for the published
-  `JustyBase.NetezzaSqlParser` 0.8.7 Access AST contract.
+- Prepare the provider package 1.1.0 for the published
+  `JustyBase.NetezzaSqlParser` 0.8.8 Access AST contract.
 
-- Aligned the provider with `JustyBase.NetezzaSqlParser` 0.8.7 and added
+- Aligned the provider with `JustyBase.NetezzaSqlParser` 0.8.8 and added
   package-level Access parser contract tests plus a parity-tested AST
   normalization bridge for a small SELECT/TOP/DISTINCTROW/crosstab subset. The
   parser remains the shared lexer/syntax dependency; SQLite translation and
@@ -103,8 +103,6 @@
 - Added the optional `JustyBase.UCanAccess.AccessCrypto` package with a pure
   .NET Agile-encryption page codec for Access 2010+ `.accdb` files, including
   opt-in Access COM round-trip fixtures and tests.
-
-## 1.1.0
 
 - Added the compatibility matrix for the ADO.NET behavior contract.
 - Enabled XML documentation generation for library projects.
