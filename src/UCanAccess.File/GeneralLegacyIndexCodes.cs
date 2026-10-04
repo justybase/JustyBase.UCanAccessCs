@@ -99,12 +99,30 @@ internal class GeneralLegacyIndexCodes
     /// <summary>
     /// Reads the given embedded resource file into an array of lines.
     /// </summary>
+    /// <remarks>
+    /// The manifest resource name is resolved from a closed literal map so
+    /// the trimmer/AOT compiler can statically see every
+    /// <c>GetManifestResourceStream</c> dependency (enumerating
+    /// <c>GetManifestResourceNames()</c> with a suffix match would be
+    /// invisible to static analysis and fail only at runtime).
+    /// </remarks>
     protected static string[] ReadResourceLines(string fileName)
     {
-        var asm = typeof(GeneralLegacyIndexCodes).Assembly;
-        string resourceName = asm.GetManifestResourceNames()
-            .Single(n => n.EndsWith("." + fileName, StringComparison.Ordinal));
-        using var stream = asm.GetManifestResourceStream(resourceName)!;
+        string resourceName = fileName switch
+        {
+            CodesFile => "UCanAccess.File.Resources.index_codes_genleg.txt",
+            ExtCodesFile => "UCanAccess.File.Resources.index_codes_ext_genleg.txt",
+            "index_codes_gen.txt" => "UCanAccess.File.Resources.index_codes_gen.txt",
+            "index_codes_ext_gen.txt" => "UCanAccess.File.Resources.index_codes_ext_gen.txt",
+            "index_codes_gen_97.txt" => "UCanAccess.File.Resources.index_codes_gen_97.txt",
+            "index_mappings_ext_gen_97.txt" => "UCanAccess.File.Resources.index_mappings_ext_gen_97.txt",
+            _ => throw new ArgumentException(
+                $"Unknown index codes resource '{fileName}'.", nameof(fileName)),
+        };
+        using var stream = typeof(GeneralLegacyIndexCodes).Assembly
+            .GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException(
+                $"Missing embedded index codes resource '{resourceName}'.");
         using var reader = new StreamReader(stream, Encoding.ASCII);
         var lines = new List<string>();
         string? line;

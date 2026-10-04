@@ -9,6 +9,11 @@
     <PackageId>JustyBase.UCanAccess.File</PackageId>
     <PackageTags>access mdb accdb jet jackcess file-format</PackageTags>
     <IsPackable>true</IsPackable>
+    <!-- NativeAOT/trim contract for consumers (TrimMode=partial): the
+         assembly is annotated and smoke-tested for PublishAot
+         (see tools/AotSmoke + CI job `aot-smoke`). -->
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

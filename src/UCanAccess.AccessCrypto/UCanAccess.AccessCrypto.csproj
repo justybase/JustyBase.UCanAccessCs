@@ -9,6 +9,11 @@
     <PackageTags>access accdb encryption crypto aes office agile</PackageTags>
     <IsPackable>true</IsPackable>
     <Description>Optional pure .NET codec for password-encrypted modern Access ACCDB files.</Description>
+    <!-- NativeAOT/trim contract for consumers (TrimMode=partial): the
+         assembly is annotated and smoke-tested for PublishAot
+         (see tools/AotSmoke + CI job `aot-smoke`). -->
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

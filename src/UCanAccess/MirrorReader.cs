@@ -178,6 +178,10 @@ public sealed class MirrorReader : DbDataReader
         }
     }
 
+    // Matches the trim annotation of DbDataReader.GetFieldType (IL2093):
+    // overrides must declare the same DynamicallyAccessedMembers usage.
+    [return: DynamicallyAccessedMembers(
+        DynamicallyAccessedMemberTypes.PublicFields | DynamicallyAccessedMemberTypes.PublicProperties)]
     public override Type GetFieldType(int ordinal)
         => GetColumnType(ordinal) switch
         {
@@ -203,7 +207,52 @@ public sealed class MirrorReader : DbDataReader
         {
             return typed;
         }
-        return (T)Convert.ChangeType(value, typeof(T), System.Globalization.CultureInfo.InvariantCulture);
+        // AOT/trim-friendly conversions with statically visible target types.
+        // (Convert.ChangeType(value, typeof(T)) relies on runtime conversion
+        // dispatch keyed by a generic type argument, which the trimmer cannot
+        // see; the explicit switch below keeps every conversion reachable.)
+        if (value is DBNull)
+        {
+            throw new InvalidCastException(
+                $"Cannot convert DBNull to {typeof(T).FullName}.");
+        }
+        Type targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+        if (targetType.IsEnum)
+        {
+            object enumValue = Enum.ToObject(targetType,
+                Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture));
+            return (T)enumValue;
+        }
+        System.Globalization.CultureInfo invariant =
+            System.Globalization.CultureInfo.InvariantCulture;
+        object? converted = Type.GetTypeCode(targetType) switch
+        {
+            TypeCode.Boolean => Convert.ToBoolean(value, invariant),
+            TypeCode.Char => Convert.ToChar(value, invariant),
+            TypeCode.SByte => Convert.ToSByte(value, invariant),
+            TypeCode.Byte => Convert.ToByte(value, invariant),
+            TypeCode.Int16 => Convert.ToInt16(value, invariant),
+            TypeCode.UInt16 => Convert.ToUInt16(value, invariant),
+            TypeCode.Int32 => Convert.ToInt32(value, invariant),
+            TypeCode.UInt32 => Convert.ToUInt32(value, invariant),
+            TypeCode.Int64 => Convert.ToInt64(value, invariant),
+            TypeCode.UInt64 => Convert.ToUInt64(value, invariant),
+            TypeCode.Single => Convert.ToSingle(value, invariant),
+            TypeCode.Double => Convert.ToDouble(value, invariant),
+            TypeCode.Decimal => Convert.ToDecimal(value, invariant),
+            TypeCode.DateTime => Convert.ToDateTime(value, invariant),
+            TypeCode.String => Convert.ToString(value, invariant),
+            _ when targetType == typeof(Guid) => value is Guid guid
+                ? guid
+                : Guid.Parse(value.ToString()!),
+            _ when targetType == typeof(byte[]) => value is byte[] bytes
+                ? bytes
+                : throw new InvalidCastException(
+                    $"Cannot convert {value.GetType().FullName} to byte[]."),
+            _ => throw new InvalidCastException(
+                $"Cannot convert {value.GetType().FullName} to {typeof(T).FullName}."),
+        };
+        return (T)converted!;
     }
 
     public override float GetFloat(int ordinal) => Convert.ToSingle(GetValue(ordinal),

@@ -100,6 +100,57 @@ jobs:
           path: TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
 
+  aot-smoke:
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish NativeAOT smoke host
+        shell: pwsh
+        run: >
+          dotnet publish tools/AotSmoke/AotSmoke.csproj -c Release
+          -r ${{ matrix.rid }} -p:PublishAot=true
+          -o artifacts/aot-smoke --nologo -v minimal 2>&1
+          | Tee-Object -FilePath aot-publish.log
+
+      # The smoke host downgrades IL2104 (transitive Superpower trim notes,
+      # see tools/AotSmoke/AotSmoke.csproj) to a warning. Every other ILxxxx
+      # note is a regression: own assemblies must stay trim-warning-free.
+      - name: Fail on unexpected trim/AOT warnings
+        shell: pwsh
+        run: |
+          $log = Get-Content -LiteralPath aot-publish.log -Raw
+          $all = @([regex]::Matches($log, '\bIL\d{4}\b') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+          Write-Output "Trim/AOT notes: $($all -join ', ')"
+          $unexpected = @($all | Where-Object { $_ -ne 'IL2104' })
+          if ($unexpected.Count -gt 0) {
+            throw "Unexpected trim/AOT notes: $($unexpected -join ', '). Only IL2104 (external Superpower) is accepted."
+          }
+          if ($all -notcontains 'IL2104') {
+            Write-Output 'NOTE: IL2104 was not observed; if Superpower becomes trim-clean, drop its WarningsNotAsErrors entry.'
+          }
+
+      - name: Run NativeAOT smoke binary
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'artifacts/aot-smoke/AotSmoke'
+          if ($IsWindows) { $exe += '.exe' }
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "AOT smoke failed with exit code $LASTEXITCODE." }
+
   oracle-consistency:
     timeout-minutes: 15
     runs-on: ubuntu-latest

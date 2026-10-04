@@ -5,6 +5,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      Trim/AOT compatibility notes (IL2026/IL3050/IL2093/IL2111/IL3053) stay
+      visible as warnings but never fail the build. AOT publishing a large
+      dependency graph realistically produces such notes;
+      strictness is kept for compiler and .NET analyzers, not for trim notes.
+      The real AOT gate is the `aot-smoke` CI job (tools/AotSmoke published
+      with PublishAot=true + runtime smoke), which fails on any trim/AOT
+      note other than the documented external IL2104 (Superpower).
+    -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);IL2026;IL3050;IL2093;IL2111;IL3053</WarningsNotAsErrors>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

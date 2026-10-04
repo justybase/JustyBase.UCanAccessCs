@@ -1324,9 +1324,13 @@ public static partial class AccessFunctions
     // Access LIKE
     // ------------------------------------------------------------------
 
-    // Compiled LIKE regexes, keyed by (pattern, case-sensitivity). Building and
-    // compiling the regex per row dominates LIKE queries; patterns repeat, so
-    // cache them. Capped to bound memory with adversarial pattern variety.
+    // LIKE regexes, keyed by (pattern, case-sensitivity). Building the regex
+    // per row dominates LIKE queries; patterns repeat, so cache them. Capped
+    // to bound memory with adversarial pattern variety.
+    // NOTE (NativeAOT): intentionally *not* RegexOptions.Compiled. The LIKE
+    // pattern is only known at runtime, so it cannot use [GeneratedRegex];
+    // interpreted mode avoids runtime code generation entirely and behaves
+    // identically under PublishAot/trimming.
     private static readonly ConcurrentDictionary<(string Pattern, bool IgnoreCase), Regex> LikeRegexCache = new();
     private const int MaxLikeRegexCacheEntries = 1024;
 
@@ -1345,7 +1349,7 @@ public static partial class AccessFunctions
             return cached.IsMatch(value);
         }
         string regex = ConvertLikePattern(pattern);
-        RegexOptions options = RegexOptions.Compiled | RegexOptions.CultureInvariant
+        RegexOptions options = RegexOptions.CultureInvariant
             | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
         var compiled = new Regex(regex, options);
         if (LikeRegexCache.Count < MaxLikeRegexCacheEntries)

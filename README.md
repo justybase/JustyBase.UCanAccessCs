@@ -141,6 +141,22 @@ Atomic commit and index DDL replace the open database file — low-level objects
 obtained from a previous database instance must not be used after that
 operation.
 
+## NativeAOT and trimming
+
+The `JustyBase.UCanAccessCs`, `JustyBase.UCanAccess.File` and
+`JustyBase.UCanAccess.AccessCrypto` assemblies declare
+`<IsTrimmable>true</IsTrimmable>` / `<IsAotCompatible>true</IsAotCompatible>`
+(`TrimMode=partial`). The contract is verified by publishing
+`tools/AotSmoke` with `-p:PublishAot=true` (CI job `aot-smoke`,
+`win-x64` + `linux-x64`) and running the resulting native binary against a
+real database file.
+
+One known external note remains: the transitive `Superpower` parser library
+(used by `JustyBase.NetezzaSqlParser` for Access SQL tokenizing) is not
+trim-annotated and produces `IL2104` during publish. It is downgraded to a
+warning for the smoke host and covered by the runtime smoke instead; any
+other `ILxxxx` note from publish is treated as a regression.
+
 ## Documentation
 
 | Document | What it covers |
