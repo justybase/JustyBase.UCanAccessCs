@@ -187,10 +187,9 @@ tools/GeneratePolishSample/  regenerates samples/sample_polish.accdb
 tools/GenerateLinkedSamples/ regenerates samples/linked/{A,B}.mdb
 ```
 
-The SQL lexer infrastructure comes from the
-[`JustyBase.NetezzaSqlParser`](https://www.nuget.org/packages/JustyBase.NetezzaSqlParser)
-NuGet package (version set once in `Directory.Build.props` as
-`JustyBaseParserVersion`).
+The SQL lexer infrastructure comes from the `JustyBase.NetezzaSqlParser`
+project in the adjacent `../JustyBase.NetezzaSql` checkout. Keep the two repos
+next to each other when building from source; the CI workflows check out both.
 
 ## Tests
 

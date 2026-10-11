@@ -16,6 +16,10 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: 'true'
 
+defaults:
+  run:
+    working-directory: JustyBase.UCanAccessCs
+
 jobs:
   build-test:
     timeout-minutes: 15
@@ -25,7 +29,15 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout UCanAccess provider
+        uses: actions/checkout@v5
+        with:
+          path: JustyBase.UCanAccessCs
+      - name: Checkout Netezza libraries
+        uses: actions/checkout@v5
+        with:
+          repository: justybase/JustyBase.NetezzaSql
+          path: JustyBase.NetezzaSql
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -97,7 +109,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: coverage
-          path: TestResults/**/coverage.cobertura.xml
+          path: JustyBase.UCanAccessCs/TestResults/**/coverage.cobertura.xml
           if-no-files-found: error
 
   aot-smoke:
@@ -112,7 +124,15 @@ jobs:
             rid: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout UCanAccess provider
+        uses: actions/checkout@v5
+        with:
+          path: JustyBase.UCanAccessCs
+      - name: Checkout Netezza libraries
+        uses: actions/checkout@v5
+        with:
+          repository: justybase/JustyBase.NetezzaSql
+          path: JustyBase.NetezzaSql
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -155,7 +175,15 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout UCanAccess provider
+        uses: actions/checkout@v5
+        with:
+          path: JustyBase.UCanAccessCs
+      - name: Checkout Netezza libraries
+        uses: actions/checkout@v5
+        with:
+          repository: justybase/JustyBase.NetezzaSql
+          path: JustyBase.NetezzaSql
 
       - uses: actions/setup-java@v5
         with:
@@ -195,7 +223,15 @@ jobs:
     timeout-minutes: 20
     runs-on: [self-hosted, windows, access]
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout UCanAccess provider
+        uses: actions/checkout@v5
+        with:
+          path: JustyBase.UCanAccessCs
+      - name: Checkout Netezza libraries
+        uses: actions/checkout@v5
+        with:
+          repository: justybase/JustyBase.NetezzaSql
+          path: JustyBase.NetezzaSql
 
       - uses: actions/setup-dotnet@v5
         with:

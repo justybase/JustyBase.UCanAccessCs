@@ -22,6 +22,6 @@ Project-level baselines (local Release runs):
 | 4 October 2026 | `UCanAccess` | 74.56% | 62.14% |
 | 4 October 2026 | `UCanAccess.File` | 76.25% | 57.80% |
 
-The SQL lexer infrastructure comes from the `JustyBase.NetezzaSqlParser` NuGet
-package and is not instrumented. Raise the floor (not the baselines) when both
+The SQL lexer infrastructure comes from the `JustyBase.NetezzaSqlParser` project
+reference and is not instrumented. Raise the floor (not the baselines) when both
 projects clear it with margin on Windows and Ubuntu.

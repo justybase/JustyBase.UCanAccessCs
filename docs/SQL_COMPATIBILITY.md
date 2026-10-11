@@ -2,8 +2,8 @@
 
 ## Parser and provider boundary
 
-The provider consumes the Access lexer and syntax contract from
-`JustyBase.NetezzaSqlParser` 0.8.8 (pinned via `JustyBaseParserVersion`). Parser support is used for shared lexical
+The provider references `JustyBase.NetezzaSqlParser.csproj` from the adjacent
+`../JustyBase.NetezzaSql` repository. Parser support is used for shared lexical
 and authoring behavior; the provider's `AccessSqlTranslator`, DDL, DML and
 SQLite mirror remain responsible for execution semantics.
 

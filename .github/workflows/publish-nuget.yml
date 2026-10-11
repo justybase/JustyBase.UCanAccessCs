@@ -22,6 +22,10 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: 'true'
 
+defaults:
+  run:
+    working-directory: JustyBase.UCanAccessCs
+
 jobs:
   publish:
     environment: production
@@ -31,7 +35,15 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout UCanAccess provider
+        uses: actions/checkout@v5
+        with:
+          path: JustyBase.UCanAccessCs
+      - name: Checkout Netezza libraries
+        uses: actions/checkout@v5
+        with:
+          repository: justybase/JustyBase.NetezzaSql
+          path: JustyBase.NetezzaSql
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -95,5 +107,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: packages
-          path: artifacts/packages/*.nupkg
+          path: JustyBase.UCanAccessCs/artifacts/packages/*.nupkg
           if-no-files-found: error

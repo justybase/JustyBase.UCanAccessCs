@@ -34,7 +34,5 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Pure .NET reader/writer for Microsoft Access database files (.mdb/.accdb) - a port of Jackcess/UCanAccess.</Description>
-    <!-- Version of the JustyBase.NetezzaSqlParser package (SQL lexer infrastructure). -->
-    <JustyBaseParserVersion Condition="'$(JustyBaseParserVersion)' == ''">0.8.8</JustyBaseParserVersion>
   </PropertyGroup>
 </Project>
