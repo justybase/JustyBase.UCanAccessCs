@@ -424,13 +424,15 @@ internal static class ExactDecimalSql
         connection.CreateFunction<object?, object?, object?>("uca_decimal_gt", CompareBoolean((c) => c > 0), true);
         connection.CreateFunction<object?, object?, object?>("uca_decimal_ge", CompareBoolean((c) => c >= 0), true);
 
-        connection.CreateAggregate<AggregateState, object?>("uca_decimal_sum", new AggregateState(), Step,
+        // Single-argument overloads: the object?[] overload allocates an argument
+        // array (and boxes) for every row, which dominated wide aggregate scans.
+        connection.CreateAggregate<object?, AggregateState?, object?>("uca_decimal_sum", new AggregateState(), Step,
             state => state?.Count > 0 ? state.Sum.ToString() : null, true);
-        connection.CreateAggregate<AggregateState, object?>("uca_decimal_avg", new AggregateState(), Step,
+        connection.CreateAggregate<object?, AggregateState?, object?>("uca_decimal_avg", new AggregateState(), Step,
             state => state?.Count > 0 ? ExactDecimal.Divide(state.Sum, new ExactDecimal(state.Count, 0)).ToString() : null, true);
-        connection.CreateAggregate<MinMaxState, object?>("uca_decimal_min", new MinMaxState(), MinStep,
+        connection.CreateAggregate<object?, MinMaxState?, object?>("uca_decimal_min", new MinMaxState(), MinStep,
             state => state?.Value?.ToString(), true);
-        connection.CreateAggregate<MinMaxState, object?>("uca_decimal_max", new MinMaxState(), MaxStep,
+        connection.CreateAggregate<object?, MinMaxState?, object?>("uca_decimal_max", new MinMaxState(), MaxStep,
             state => state?.Value?.ToString(), true);
     }
 
@@ -469,11 +471,161 @@ internal static class ExactDecimalSql
         {
             return left == right ? 0 : left == null ? -1 : 1;
         }
+        if (TryCompareDecimalText(left, right, out int fast))
+        {
+            return fast;
+        }
         if (ExactDecimal.TryParse(left, out ExactDecimal l) && ExactDecimal.TryParse(right, out ExactDecimal r))
         {
             return l.CompareTo(r);
         }
         return string.Compare(left, right, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Compares two plain decimal strings (sign, digits, optional decimal point)
+    /// without allocating. SQLite calls the collation for every comparison of a
+    /// MONEY/NUMERIC column — sorts and range filters included — and the
+    /// <see cref="ExactDecimal"/> path allocates a BigInteger per operand.
+    /// Returns false for any other shape so the caller can fall back.
+    /// </summary>
+    private static bool TryCompareDecimalText(string left, string right, out int result)
+    {
+        result = 0;
+        if (!TrySplitDecimal(left.AsSpan(), out bool leftNegative, out ReadOnlySpan<char> leftInteger,
+                out ReadOnlySpan<char> leftFraction)
+            || !TrySplitDecimal(right.AsSpan(), out bool rightNegative, out ReadOnlySpan<char> rightInteger,
+                out ReadOnlySpan<char> rightFraction))
+        {
+            return false;
+        }
+
+        leftInteger = TrimLeadingZeros(leftInteger);
+        rightInteger = TrimLeadingZeros(rightInteger);
+        leftFraction = TrimTrailingZeros(leftFraction);
+        rightFraction = TrimTrailingZeros(rightFraction);
+
+        bool leftZero = leftInteger.IsEmpty && leftFraction.IsEmpty;
+        bool rightZero = rightInteger.IsEmpty && rightFraction.IsEmpty;
+        if (leftZero && rightZero)
+        {
+            return true;
+        }
+        if (leftZero)
+        {
+            result = rightNegative ? 1 : -1;
+            return true;
+        }
+        if (rightZero)
+        {
+            result = leftNegative ? -1 : 1;
+            return true;
+        }
+        if (leftNegative != rightNegative)
+        {
+            result = leftNegative ? -1 : 1;
+            return true;
+        }
+
+        int magnitude = CompareMagnitude(leftInteger, leftFraction, rightInteger, rightFraction);
+        result = leftNegative ? -magnitude : magnitude;
+        return true;
+    }
+
+    private static int CompareMagnitude(ReadOnlySpan<char> leftInteger, ReadOnlySpan<char> leftFraction,
+        ReadOnlySpan<char> rightInteger, ReadOnlySpan<char> rightFraction)
+    {
+        if (leftInteger.Length != rightInteger.Length)
+        {
+            return leftInteger.Length < rightInteger.Length ? -1 : 1;
+        }
+        int integer = leftInteger.SequenceCompareTo(rightInteger);
+        if (integer != 0)
+        {
+            return integer < 0 ? -1 : 1;
+        }
+        int length = Math.Max(leftFraction.Length, rightFraction.Length);
+        for (int i = 0; i < length; i++)
+        {
+            char l = i < leftFraction.Length ? leftFraction[i] : '0';
+            char r = i < rightFraction.Length ? rightFraction[i] : '0';
+            if (l != r)
+            {
+                return l < r ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
+    private static bool TrySplitDecimal(ReadOnlySpan<char> text, out bool negative,
+        out ReadOnlySpan<char> integer, out ReadOnlySpan<char> fraction)
+    {
+        negative = false;
+        integer = default;
+        fraction = default;
+        if (text.IsEmpty)
+        {
+            return false;
+        }
+        if (text[0] == '-')
+        {
+            negative = true;
+            text = text[1..];
+        }
+        else if (text[0] == '+')
+        {
+            text = text[1..];
+        }
+
+        int dot = text.IndexOf('.');
+        if (dot < 0)
+        {
+            integer = text;
+        }
+        else
+        {
+            integer = text[..dot];
+            fraction = text[(dot + 1)..];
+        }
+        if (integer.Length + fraction.Length == 0)
+        {
+            return false;
+        }
+        for (int i = 0; i < integer.Length; i++)
+        {
+            if (integer[i] is < '0' or > '9')
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < fraction.Length; i++)
+        {
+            if (fraction[i] is < '0' or > '9')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static ReadOnlySpan<char> TrimLeadingZeros(ReadOnlySpan<char> value)
+    {
+        int start = 0;
+        while (start < value.Length && value[start] == '0')
+        {
+            start++;
+        }
+        return value[start..];
+    }
+
+    private static ReadOnlySpan<char> TrimTrailingZeros(ReadOnlySpan<char> value)
+    {
+        int end = value.Length;
+        while (end > 0 && value[end - 1] == '0')
+        {
+            end--;
+        }
+        return value[..end];
     }
 
     internal static int CompareTextForCollation(string? left, string? right)
@@ -485,7 +637,7 @@ internal static class ExactDecimalSql
         public long Count;
     }
 
-    private static AggregateState Step(AggregateState? state, object?[] args)
+    private static AggregateState? Step(AggregateState? state, object? arg)
     {
         var next = new AggregateState();
         if (state != null)
@@ -493,12 +645,8 @@ internal static class ExactDecimalSql
             next.Sum = state.Sum;
             next.Count = state.Count;
         }
-        foreach (object? arg in args)
+        if (arg is not null and not DBNull)
         {
-            if (arg is null or DBNull)
-            {
-                continue;
-            }
             ExactDecimal value = ExactDecimal.Parse(arg);
             next.Sum = next.Count == 0 ? value : ExactDecimal.Add(next.Sum, value);
             next.Count++;
@@ -511,21 +659,17 @@ internal static class ExactDecimalSql
         public ExactDecimal? Value;
     }
 
-    private static MinMaxState MinStep(MinMaxState? state, object?[] args)
-        => MinMaxStep(state, args, min: true);
+    private static MinMaxState? MinStep(MinMaxState? state, object? arg)
+        => MinMaxStep(state, arg, min: true);
 
-    private static MinMaxState MaxStep(MinMaxState? state, object?[] args)
-        => MinMaxStep(state, args, min: false);
+    private static MinMaxState? MaxStep(MinMaxState? state, object? arg)
+        => MinMaxStep(state, arg, min: false);
 
-    private static MinMaxState MinMaxStep(MinMaxState? state, object?[] args, bool min)
+    private static MinMaxState? MinMaxStep(MinMaxState? state, object? arg, bool min)
     {
         var next = new MinMaxState { Value = state?.Value };
-        foreach (object? arg in args)
+        if (arg is not null and not DBNull)
         {
-            if (arg is null or DBNull)
-            {
-                continue;
-            }
             ExactDecimal value = ExactDecimal.Parse(arg);
             if (next.Value == null || (value.CompareTo(next.Value.Value) < 0) == min)
             {

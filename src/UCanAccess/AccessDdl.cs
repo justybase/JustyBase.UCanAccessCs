@@ -74,6 +74,13 @@ public static class AccessDdl
     /// </summary>
     public static bool IsSelectInto(string sql)
     {
+        // Cheap pre-filter: every query path asks this question, and a full
+        // tokenize per command was measurable. Without the "into" substring a
+        // top-level INTO token cannot exist, so the answer is already false.
+        if (sql.IndexOf("into", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return false;
+        }
         List<Token> tokens = Tokenize(AccessSqlTranslator.Preprocess(sql));
         if (tokens.Count < 2 || !tokens[0].Text.Equals("select", StringComparison.OrdinalIgnoreCase))
         {

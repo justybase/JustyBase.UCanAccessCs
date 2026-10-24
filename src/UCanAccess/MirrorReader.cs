@@ -18,81 +18,112 @@ public sealed class MirrorReader : DbDataReader
     private readonly SqliteCommand _command;
     private readonly Func<string, string, bool> _isBooleanColumn;
     private readonly Func<string, string, DataType?> _getColumnType;
-    private readonly Func<int, bool>? _isExactDecimalResult;
+    private readonly Func<string, int, bool[]>? _exactDecimalProjections;
     private readonly Action<SqliteCommand> _releaseCommand;
     private readonly Action? _onDispose;
-    private readonly Dictionary<int, bool> _columnIsBoolean = new();
-    private readonly Dictionary<int, (string? Table, string? Column)> _baseColumns = new();
-    private readonly Dictionary<int, bool> _exactDecimalResults = new();
+    private readonly ReaderColumnCache? _resultColumns;
+    private readonly string _sql;
+    private ReaderColumn[]? _columns;
+    private DataTable? _schemaTable;
+    private bool _schemaTableResolved;
     private bool _disposed;
 
     internal MirrorReader(SqliteDataReader inner, SqliteCommand command,
         Func<string, string, bool> isBooleanColumn,
         Func<string, string, DataType?> getColumnType,
-        Func<int, bool>? isExactDecimalResult,
+        Func<string, int, bool[]>? exactDecimalProjections,
         Action<SqliteCommand> releaseCommand,
-        Action? onDispose = null)
+        Action? onDispose = null,
+        ReaderColumnCache? resultColumns = null,
+        string sql = "")
     {
         _inner = inner;
         _command = command;
         _isBooleanColumn = isBooleanColumn;
         _getColumnType = getColumnType;
-        _isExactDecimalResult = isExactDecimalResult;
+        _exactDecimalProjections = exactDecimalProjections;
         _releaseCommand = releaseCommand;
         _onDispose = onDispose;
+        _resultColumns = resultColumns;
+        _sql = sql;
     }
 
     private bool IsBooleanColumn(int ordinal)
+        => (uint)ordinal < (uint)Columns.Length && Columns[ordinal].IsBoolean;
+
+    /// <summary>
+    /// Per-result-column metadata, resolved once per statement (and reused for
+    /// later readers of the same translated SQL through the mirror's cache).
+    /// </summary>
+    private ReaderColumn[] Columns
     {
-        if (!_columnIsBoolean.TryGetValue(ordinal, out bool value))
+        get
         {
-            (string? table, string? column) = GetBaseColumn(ordinal);
-            value = _isBooleanColumn(table ?? string.Empty, column ?? GetName(ordinal));
-            _columnIsBoolean[ordinal] = value;
+            ReaderColumn[]? columns = _columns;
+            if (columns != null)
+            {
+                return columns;
+            }
+            if (_resultColumns != null && _resultColumns.TryGet(_sql, out ReaderColumn[]? cached))
+            {
+                _columns = cached;
+                return cached;
+            }
+            columns = BuildColumns();
+            _columns = columns;
+            _resultColumns?.Store(_sql, columns);
+            return columns;
         }
-        return value;
     }
 
-    private (string? Table, string? Column) GetBaseColumn(int ordinal)
+    /// <summary>
+    /// Source-table/column mapping for every result column. Microsoft.Data.Sqlite
+    /// builds a fresh 20-column <see cref="DataTable"/> (plus three schema queries
+    /// per column, one of which scans the base table) on every
+    /// <c>GetSchemaTable</c> call, so it is fetched at most once per reader.
+    /// </summary>
+    private DataTable? SchemaTable
     {
-        if (_baseColumns.TryGetValue(ordinal, out var result))
+        get
         {
-            return result;
+            if (!_schemaTableResolved)
+            {
+                _schemaTableResolved = true;
+                _schemaTable = _inner.GetSchemaTable();
+            }
+            return _schemaTable;
         }
+    }
 
-        DataTable? schema = _inner.GetSchemaTable();
-        if (schema == null || ordinal >= schema.Rows.Count)
+    private ReaderColumn[] BuildColumns()
+    {
+        int count = _inner.FieldCount;
+        var columns = new ReaderColumn[count];
+        DataTable? schema = SchemaTable;
+        bool[]? exactDecimal = _exactDecimalProjections?.Invoke(_sql, count);
+        for (int ordinal = 0; ordinal < count; ordinal++)
         {
-            result = (null, null);
+            string? table = null;
+            string? column = null;
+            if (schema != null && ordinal < schema.Rows.Count)
+            {
+                DataRow row = schema.Rows[ordinal];
+                table = row.Table.Columns.Contains("BaseTableName") ? row["BaseTableName"] as string : null;
+                column = row.Table.Columns.Contains("BaseColumnName") ? row["BaseColumnName"] as string : null;
+            }
+            DataType? type = table == null || column == null ? null : _getColumnType(table, column);
+            bool isBoolean = _isBooleanColumn(table ?? string.Empty, column ?? _inner.GetName(ordinal));
+            columns[ordinal] = new ReaderColumn(table, column, type, isBoolean,
+                exactDecimal != null && ordinal < exactDecimal.Length && exactDecimal[ordinal]);
         }
-        else
-        {
-            DataRow row = schema.Rows[ordinal];
-            result = (
-                row.Table.Columns.Contains("BaseTableName") ? row["BaseTableName"] as string : null,
-                row.Table.Columns.Contains("BaseColumnName") ? row["BaseColumnName"] as string : null);
-        }
-        _baseColumns[ordinal] = result;
-        return result;
+        return columns;
     }
 
     private DataType? GetColumnType(int ordinal)
-    {
-        (string? table, string? column) = GetBaseColumn(ordinal);
-        return table == null || column == null ? null : _getColumnType(table, column);
-    }
+        => (uint)ordinal < (uint)Columns.Length ? Columns[ordinal].Type : null;
 
     private bool IsExactDecimalResult(int ordinal)
-    {
-        // Pure function of (sql, ordinal): tokenizing the statement per cell
-        // dominates expression-heavy result sets, so resolve once per column.
-        if (!_exactDecimalResults.TryGetValue(ordinal, out bool value))
-        {
-            value = _isExactDecimalResult?.Invoke(ordinal) == true;
-            _exactDecimalResults[ordinal] = value;
-        }
-        return value;
-    }
+        => (uint)ordinal < (uint)Columns.Length && Columns[ordinal].IsExactDecimalProjection;
 
     private object ConvertValue(int ordinal, object value)
     {

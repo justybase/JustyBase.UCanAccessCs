@@ -47,6 +47,7 @@ public sealed class Mirror : IDisposable
     private readonly List<string> _diagnostics = new();
     private readonly object _sync = new();
     private readonly ConcurrentDictionary<TranslationKey, TranslationResult> _translationCache = new();
+    private readonly ReaderColumnCache _readerColumns = new();
     private bool _disposed;
 
     /// <summary>
@@ -248,7 +249,13 @@ public sealed class Mirror : IDisposable
         return translated;
     }
 
-    private void ClearTranslationCache() => _translationCache.Clear();
+    private void ClearTranslationCache()
+    {
+        _translationCache.Clear();
+        // Column origins are resolved from the same schema the translator reads,
+        // so both caches are invalidated together.
+        _readerColumns.Clear();
+    }
 
     /// <summary>
     /// Number of cached translations (test seam: proves repeated commands hit
@@ -491,6 +498,11 @@ public sealed class Mirror : IDisposable
             using var idCommand = _connection.CreateCommand();
             idCommand.Transaction = activeTransaction;
             idCommand.CommandText = "SELECT last_insert_rowid()";
+            // Reading the rowid through the connection handle skips a full
+            // prepare/step round trip for every mirrored row (~25% of the
+            // materialization time on large tables). The SQL fallback keeps the
+            // path working if the handle is unavailable.
+            SQLitePCL.sqlite3? handle = _connection.Handle;
             foreach (Table.RowLocation location in table.RowLocations())
             {
                 for (int i = 0; i < ordered.Length; i++)
@@ -498,7 +510,9 @@ public sealed class Mirror : IDisposable
                     parameters[i].Value = ToSqliteValue(location.Row[ordered[i].FileIndex], ordered[i].Column);
                 }
                 cmd.ExecuteNonQuery();
-                long sqliteRowId = Convert.ToInt64(idCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+                long sqliteRowId = handle != null
+                    ? SQLitePCL.raw.sqlite3_last_insert_rowid(handle)
+                    : Convert.ToInt64(idCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
                 locators[sqliteRowId] = location;
             }
         }
@@ -555,7 +569,7 @@ public sealed class Mirror : IDisposable
                 CommandBehavior sqliteBehavior = behavior & ~CommandBehavior.CloseConnection;
                 SqliteDataReader reader = cmd.ExecuteReader(sqliteBehavior);
                 return new MirrorReader(reader, cmd, IsBooleanColumn, GetColumnType,
-                    ordinal => IsExactDecimalProjection(sql, ordinal), ReleaseCommand, onDispose);
+                    ExactDecimalProjections, ReleaseCommand, onDispose, _readerColumns, sql);
             }
             catch
             {
@@ -586,7 +600,29 @@ public sealed class Mirror : IDisposable
         command.Dispose();
     }
 
-    private bool IsExactDecimalProjection(string sql, int ordinal)
+    /// <summary>
+    /// Flags the result columns whose outer expression is an exact-decimal
+    /// operation. The statement is tokenized once for every column instead of
+    /// once per column, which used to dominate expression-heavy result sets.
+    /// </summary>
+    private bool[] ExactDecimalProjections(string sql, int columnCount)
+    {
+        var exactDecimal = new bool[columnCount];
+        List<List<AccessTokenizer.Token>>? projections = SelectProjections(sql);
+        if (projections == null)
+        {
+            return exactDecimal;
+        }
+        int count = Math.Min(columnCount, projections.Count);
+        for (int ordinal = 0; ordinal < count; ordinal++)
+        {
+            exactDecimal[ordinal] = IsExactDecimalProjection(projections[ordinal]);
+        }
+        return exactDecimal;
+    }
+
+    /// <summary>the comma-separated SELECT projections, or null when there is no SELECT ... FROM shape</summary>
+    private static List<List<AccessTokenizer.Token>>? SelectProjections(string sql)
     {
         List<AccessTokenizer.Token> tokens;
         try
@@ -595,13 +631,13 @@ public sealed class Mirror : IDisposable
         }
         catch
         {
-            return false;
+            return null;
         }
 
         int select = tokens.FindIndex(t => t.Text.Equals("select", StringComparison.OrdinalIgnoreCase));
         if (select < 0)
         {
-            return false;
+            return null;
         }
 
         int depth = 0;
@@ -618,7 +654,7 @@ public sealed class Mirror : IDisposable
         }
         if (from < 0)
         {
-            return false;
+            return null;
         }
 
         var projections = new List<List<AccessTokenizer.Token>>();
@@ -640,12 +676,12 @@ public sealed class Mirror : IDisposable
             }
         }
         projections.Add(current);
-        if (ordinal < 0 || ordinal >= projections.Count)
-        {
-            return false;
-        }
+        return projections;
+    }
 
-        List<AccessTokenizer.Token> projection = projections[ordinal];
+    /// <summary>whether one projection's outer expression is an exact-decimal operation</summary>
+    private bool IsExactDecimalProjection(List<AccessTokenizer.Token> projection)
+    {
         // Only a projection whose outer expression is an exact-decimal
         // operation should be converted to CLR decimal.  Looking for the
         // function name anywhere in the expression would misclassify e.g.

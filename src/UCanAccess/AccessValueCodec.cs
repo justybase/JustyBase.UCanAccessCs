@@ -173,12 +173,89 @@ internal static class AccessValueCodec
         {
             return DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified);
         }
+        if (value is string text && TryParseMirrorDate(text.AsSpan(), out DateTime fast))
+        {
+            return fast;
+        }
         if (DateTime.TryParseExact(value.ToString(), DateFormats, CultureInfo.InvariantCulture,
                 DateTimeStyles.AllowWhiteSpaces, out DateTime parsed))
         {
             return DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
         }
         throw new FormatException($"Value '{value}' is not a valid Access date.");
+    }
+
+    /// <summary>
+    /// Parses the canonical mirror representation written by
+    /// <see cref="FormatDate(DateTime)"/> — <c>yyyy-MM-dd HH:mm:ss[.fffffff]</c>.
+    /// The mirror writes every date column in that shape, so the common case
+    /// avoids the culture-aware format-list search (ICU-driven and several
+    /// times slower); anything else falls back to <see cref="DateFormats"/>.
+    /// </summary>
+    private static bool TryParseMirrorDate(ReadOnlySpan<char> text, out DateTime value)
+    {
+        value = default;
+        if (text.Length is < 19 or > 27)
+        {
+            return false;
+        }
+        if (text[4] != '-' || text[7] != '-' || text[10] != ' ' || text[13] != ':' || text[16] != ':')
+        {
+            return false;
+        }
+        if (!TryReadNumber(text, 0, 4, out int year)
+            || !TryReadNumber(text, 5, 2, out int month)
+            || !TryReadNumber(text, 8, 2, out int day)
+            || !TryReadNumber(text, 11, 2, out int hour)
+            || !TryReadNumber(text, 14, 2, out int minute)
+            || !TryReadNumber(text, 17, 2, out int second))
+        {
+            return false;
+        }
+        long fractionTicks = 0;
+        if (text.Length > 19)
+        {
+            if (text[19] != '.')
+            {
+                return false;
+            }
+            int digits = text.Length - 20;
+            if (digits is < 1 or > 7 || !TryReadNumber(text, 20, digits, out int fraction))
+            {
+                return false;
+            }
+            // .f, .ff, ... .fffffff all describe the same fraction of a second.
+            for (int i = digits; i < 7; i++)
+            {
+                fraction *= 10;
+            }
+            fractionTicks = fraction;
+        }
+        if (year == 0 || month is 0 or > 12 || day == 0 || day > DateTime.DaysInMonth(year, month)
+            || hour > 23 || minute > 59 || second > 59)
+        {
+            return false;
+        }
+        value = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Unspecified)
+            .AddTicks(fractionTicks);
+        return true;
+    }
+
+    private static bool TryReadNumber(ReadOnlySpan<char> text, int start, int length, out int result)
+    {
+        int value = 0;
+        for (int i = start; i < start + length; i++)
+        {
+            int digit = text[i] - '0';
+            if ((uint)digit > 9)
+            {
+                result = 0;
+                return false;
+            }
+            value = (value * 10) + digit;
+        }
+        result = value;
+        return true;
     }
 
     public static string FormatDate(DateTime value)

@@ -275,18 +275,30 @@ public sealed class UCanAccessConnection : DbConnection
         // update a different file. Reopening the main handle opportunistically
         // here would leave a second link resolver alive on Windows; linked-file
         // freshness is handled by the explicit mirror refresh path instead.
-        if (_database.GetTableMetaData().Any(meta => meta.IsLinked))
+        IReadOnlyList<TableMetaData> metadata = _database.GetTableMetaData();
+        for (int i = 0; i < metadata.Count; i++)
         {
-            return;
+            if (metadata[i].IsLinked)
+            {
+                return;
+            }
         }
         string path = _database.Path;
-        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+        if (string.IsNullOrEmpty(path))
         {
             return;
         }
 
-        DateTime writeTime = System.IO.File.GetLastWriteTimeUtc(path);
-        long length = new System.IO.FileInfo(path).Length;
+        // One FileInfo probe (single stat) for existence, write time and length;
+        // this runs on every command, so the extra syscalls and the LINQ
+        // enumerator of the previous version were measurable.
+        var file = new FileInfo(path);
+        if (!file.Exists)
+        {
+            return;
+        }
+        DateTime writeTime = file.LastWriteTimeUtc;
+        long length = file.Length;
         if (writeTime.Ticks == _sourceWriteTicks && length == _sourceLength)
         {
             return;

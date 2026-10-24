@@ -118,3 +118,54 @@ scratch buffers, cached `Pow10` tables, hex via `Convert.ToHexString` +
 rows grouped once per read with invalidation on write, pooled encrypted-write
 buffers in `PageChannel`. Wall times carry machine noise plus cross-test JIT
 warmup; allocations are the stable signal (`Mirror.Open` -8% vs F1).
+
+## F3: result-set metadata and command overhead (same machine, 20,000 rows)
+
+Profiling with `dotnet-trace --profile dotnet-sampled-thread-time` identified two
+per-statement costs that dominated every query shape:
+
+* `Microsoft.Data.Sqlite.SqliteDataReader.GetSchemaTable()` — needed to map a
+  result column to its Access base column — runs three SQL statements per result
+  column, one of which is `SELECT typeof(col) … GROUP BY typeof(col)`, i.e. a
+  **full scan of the base table per column**. `MirrorReader` called it once per
+  ordinal, so a five-column query scanned the table five times before returning
+  a row.
+* `AccessDdl.IsSelectInto` tokenized the whole statement on every command, and
+  `UCanAccessConnection.EnsureDatabaseCurrent` used three filesystem probes plus
+  a LINQ enumerator per command.
+
+Changes (each measured separately; kept only when it moved time or allocations):
+
+| Change | Where |
+|---|---|
+| Resolve result-column origins and Access classifications once per statement, memoized per mirror by translated SQL (invalidated with the translation cache) | `ReaderColumnCache`, `MirrorReader`, `Mirror` |
+| Fetch `GetSchemaTable()` at most once per reader, tokenize the SELECT list once per statement instead of once per column | `MirrorReader`, `Mirror.ExactDecimalProjections` |
+| Read the mirrored rowid through the SQLite connection handle instead of a per-row `SELECT last_insert_rowid()` | `Mirror.LoadData` |
+| Single `FileInfo` probe (one stat) and no LINQ enumerator in the per-command freshness check | `UCanAccessConnection.EnsureDatabaseCurrent` |
+| Substring pre-filter before tokenizing for `SELECT … INTO` | `AccessDdl.IsSelectInto` |
+| Fast span parser for the canonical `yyyy-MM-dd HH:mm:ss.fff` mirror date before the 14-format culture-aware search | `AccessValueCodec.ParseDate` |
+| Single-argument aggregate bindings (no per-row `object[]`) | `ExactDecimalSql`, `AccessFunctions` |
+| Allocation-free collation for plain decimal text (money sorting/filtering) | `ExactDecimalSql.CompareText` |
+
+Before/after on the same host, same harness (6 s x 3 runs per phase, third run;
+`HEAD` measured back-to-back with the patched tree):
+
+| Operation | Before | After | Time | Allocations |
+|---|---:|---:|---:|---:|
+| `Mirror.Open` | 61.1 ms / 32.7 MB | 51.5 ms / 24.5 MB | -16% | -25% |
+| `Command.repeat` (per command) | 304 us / 33,954 B | 39 us / 3,053 B | -87% | -91% |
+| Query scan (5 columns, 20k rows) | 165.9 ms | 19.1 ms | -88% | -45% |
+| Query filter (`amount > ?`, 10k rows) | 39.9 ms | 15.2 ms | -62% | -12% |
+| Query LIKE (11k rows) | 36.4 ms | 11.2 ms | -69% | -12% |
+| Query GROUP BY | 28.3 ms | 11.1 ms | -61% | -17% |
+| Query window functions | 136.0 ms | 49.2 ms | -64% | -4% |
+| Query concat (5k rows) | 19.7 ms | 6.8 ms | -65% | -11% |
+| Query decimal aggregates | 27.1 ms | 25.9 ms | -4% | -16% |
+| `Translate` per statement | 1.22 ms | 1.28 ms | unchanged | unchanged |
+
+`Translate` was deliberately left untouched (translation results are already
+memoized per mirror, so its 38 KB/statement only applies to first execution).
+`Decimal_collation_orders_like_numeric_comparison` pins the new collation fast
+path against a numeric oracle (signs, leading/trailing zeros, differing scales,
+exponents, values beyond `decimal` range).
+

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Xunit;
 
 namespace UCanAccess.Tests;
@@ -99,6 +100,44 @@ public sealed class ExactDecimalTests
         {
             System.IO.File.Delete(path);
         }
+    }
+
+    [Theory]
+    [InlineData("1", "1", 0)]
+    [InlineData("1.5", "1.50", 0)]
+    [InlineData("0.5", "0.5000", 0)]
+    [InlineData("001", "1", 0)]
+    [InlineData("0", "-0.0", 0)]
+    [InlineData("0.0001", "0", 1)]
+    [InlineData("-0.0001", "0", -1)]
+    [InlineData("-1.5", "-1.05", -1)]
+    [InlineData("-10", "-9.9999", -1)]
+    [InlineData("9.99", "10", -1)]
+    [InlineData("100.0000", "99.9999", 1)]
+    [InlineData("0.5", "1", -1)]
+    [InlineData("+2.50", "2.5", 0)]
+    public void Decimal_collation_orders_like_numeric_comparison(string left, string right, int expected)
+    {
+        // The mirror keeps MONEY/NUMERIC values as text and orders/filters them
+        // through this collation; it must agree with numeric ordering for every
+        // plain decimal shape (and stay antisymmetric).
+        Assert.Equal(expected, Math.Sign(ExactDecimalSql.CompareTextForCollation(left, right)));
+        Assert.Equal(-expected, Math.Sign(ExactDecimalSql.CompareTextForCollation(right, left)));
+
+        decimal numericLeft = decimal.Parse(left, CultureInfo.InvariantCulture);
+        decimal numericRight = decimal.Parse(right, CultureInfo.InvariantCulture);
+        Assert.Equal(Math.Sign(numericLeft.CompareTo(numericRight)), expected);
+    }
+
+    [Theory]
+    [InlineData("1e2", "100", 0)]
+    [InlineData("123456789012345678901234567890", "123456789012345678901234567891", -1)]
+    [InlineData("123456789012345678901234567891", "123456789012345678901234567890", 1)]
+    public void Decimal_collation_handles_exponents_and_values_beyond_decimal_range(
+        string left, string right, int expected)
+    {
+        Assert.Equal(expected, Math.Sign(ExactDecimalSql.CompareTextForCollation(left, right)));
+        Assert.Equal(-expected, Math.Sign(ExactDecimalSql.CompareTextForCollation(right, left)));
     }
 
     private static void Execute(UCanAccessConnection connection, string sql)

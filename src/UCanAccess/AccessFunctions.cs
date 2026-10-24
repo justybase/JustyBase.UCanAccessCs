@@ -226,18 +226,20 @@ public static partial class AccessFunctions
 
         // HSQLDB AVG() of integer values truncates to an integer; SQLite returns a real.
         // A registered aggregate shadows the SQLite builtin and mirrors HSQLDB's typing.
-        connection.CreateAggregate<AvgState, object?>("avg", new AvgState(), AvgStep, AvgResult, true);
-        connection.CreateAggregate<StatisticsState, object?>("stdev", new StatisticsState(), StatisticsStep,
+        // The single-argument overloads are used on purpose: the object?[] overload
+        // allocates an argument array (and boxes) for every row and group.
+        connection.CreateAggregate<object?, AvgState?, object?>("avg", new AvgState(), AvgStep, AvgResult, true);
+        connection.CreateAggregate<object?, StatisticsState?, object?>("stdev", new StatisticsState(), StatisticsStep,
             state => StatisticsResult(state, sample: true, squareRoot: true), true);
-        connection.CreateAggregate<StatisticsState, object?>("stdevp", new StatisticsState(), StatisticsStep,
+        connection.CreateAggregate<object?, StatisticsState?, object?>("stdevp", new StatisticsState(), StatisticsStep,
             state => StatisticsResult(state, sample: false, squareRoot: true), true);
-        connection.CreateAggregate<StatisticsState, object?>("var", new StatisticsState(), StatisticsStep,
+        connection.CreateAggregate<object?, StatisticsState?, object?>("var", new StatisticsState(), StatisticsStep,
             state => StatisticsResult(state, sample: true, squareRoot: false), true);
-        connection.CreateAggregate<StatisticsState, object?>("varp", new StatisticsState(), StatisticsStep,
+        connection.CreateAggregate<object?, StatisticsState?, object?>("varp", new StatisticsState(), StatisticsStep,
             state => StatisticsResult(state, sample: false, squareRoot: false), true);
-        connection.CreateAggregate<FirstLastState, object?>("first", new FirstLastState(), FirstLastStep,
+        connection.CreateAggregate<object?, FirstLastState?, object?>("first", new FirstLastState(), FirstLastStep,
             state => state?.HasValue == true ? state.First : null, true);
-        connection.CreateAggregate<FirstLastState, object?>("last", new FirstLastState(), FirstLastStep,
+        connection.CreateAggregate<object?, FirstLastState?, object?>("last", new FirstLastState(), FirstLastStep,
             state => state?.HasValue == true ? state.Last : null, true);
     }
 
@@ -1077,7 +1079,7 @@ public static partial class AccessFunctions
         public bool AllInteger = true;
     }
 
-    private static AvgState AvgStep(AvgState? state, object?[] args)
+    private static AvgState? AvgStep(AvgState? state, object? arg)
     {
         // The seed object passed to CreateAggregate is reused for every evaluation,
         // so never mutate it: work on a fresh copy each step.
@@ -1088,12 +1090,8 @@ public static partial class AccessFunctions
             next.Count = state.Count;
             next.AllInteger = state.AllInteger;
         }
-        foreach (object? arg in args)
+        if (arg is not null and not DBNull)
         {
-            if (arg is null or DBNull)
-            {
-                continue;
-            }
             next.Count++;
             if (arg is not (byte or sbyte or short or ushort or int or uint or long or ulong))
             {
@@ -1125,7 +1123,7 @@ public static partial class AccessFunctions
         public double SumOfSquares;
     }
 
-    private static StatisticsState StatisticsStep(StatisticsState? state, object?[] args)
+    private static StatisticsState? StatisticsStep(StatisticsState? state, object? arg)
     {
         var next = new StatisticsState();
         if (state != null)
@@ -1134,12 +1132,8 @@ public static partial class AccessFunctions
             next.Sum = state.Sum;
             next.SumOfSquares = state.SumOfSquares;
         }
-        foreach (object? arg in args)
+        if (arg is not null and not DBNull)
         {
-            if (arg is null or DBNull)
-            {
-                continue;
-            }
             double value = ToDouble(arg);
             next.Count++;
             next.Sum += value;
@@ -1169,7 +1163,7 @@ public static partial class AccessFunctions
         public object? Last;
     }
 
-    private static FirstLastState FirstLastStep(FirstLastState? state, object?[] args)
+    private static FirstLastState? FirstLastStep(FirstLastState? state, object? arg)
     {
         var next = new FirstLastState();
         if (state != null)
@@ -1178,12 +1172,8 @@ public static partial class AccessFunctions
             next.First = state.First;
             next.Last = state.Last;
         }
-        foreach (object? arg in args)
+        if (arg is not null and not DBNull)
         {
-            if (arg is null or DBNull)
-            {
-                continue;
-            }
             if (!next.HasValue)
             {
                 next.HasValue = true;
