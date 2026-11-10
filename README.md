@@ -7,7 +7,7 @@ A pure .NET ADO.NET provider and file-format implementation for Microsoft Access
 
 No Microsoft Access. No ODBC. No ACE driver.
 
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat)](https://dotnet.microsoft.com/)
+[![.NET 11](https://img.shields.io/badge/.NET-11.0-512BD4?style=flat)](https://dotnet.microsoft.com/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-4D6BFE?style=flat)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Port of Jackcess and UCanAccess](https://img.shields.io/badge/port%20of-Jackcess%20%2B%20UCanAccess-brightgreen?style=flat)](https://github.com/justybase/JustyBase.UCanAccessCs)
 
